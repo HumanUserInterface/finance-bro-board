@@ -186,7 +186,11 @@ Voice: ${persona.voiceDescription}
       { role: 'system', content: personaPrompt },
       {
         role: 'user',
-        content: `${financialSummary}\n${purchaseSummary}\n\nAs ${persona.name}, research this purchase. Analyze the market context, price, alternatives, and key considerations.`,
+        content: `${financialSummary}\n${purchaseSummary}\n\nAs ${persona.name}, research this purchase and respond with JSON containing EXACTLY these fields:
+- marketContext: a string describing the current market for this type of item
+- priceAnalysis: a string analyzing whether the price is fair
+- alternatives: an array of strings listing alternative products or approaches
+- keyConsiderations: an array of strings with important factors to consider`,
       },
     ],
     ResearchSchema
@@ -198,7 +202,12 @@ Voice: ${persona.voiceDescription}
       { role: 'system', content: personaPrompt },
       {
         role: 'user',
-        content: `${financialSummary}\n${purchaseSummary}\n\nResearch findings:\n${JSON.stringify(research, null, 2)}\n\nAs ${persona.name}, analyze this purchase from your unique perspective. Consider the pros, cons, and how it aligns with your values.`,
+        content: `${financialSummary}\n${purchaseSummary}\n\nResearch findings:\n${JSON.stringify(research, null, 2)}\n\nAs ${persona.name}, analyze this purchase and respond with JSON containing EXACTLY these fields:
+- prosFromMyPerspective: an array of strings listing reasons to approve
+- consFromMyPerspective: an array of strings listing reasons to reject
+- alignmentWithValues: a string explaining how this aligns with your values
+- initialLeaning: either "approve", "reject", or "unsure"
+- confidenceLevel: a number from 0 to 100`,
       },
     ],
     ReasoningSchema
@@ -210,7 +219,11 @@ Voice: ${persona.voiceDescription}
       { role: 'system', content: personaPrompt },
       {
         role: 'user',
-        content: `${financialSummary}\n${purchaseSummary}\n\nYour initial reasoning:\n${JSON.stringify(reasoning, null, 2)}\n\nAs ${persona.name}, critique your own reasoning. What blind spots might you have? What counter-arguments should you consider? Make your final decision.`,
+        content: `${financialSummary}\n${purchaseSummary}\n\nYour initial reasoning:\n${JSON.stringify(reasoning, null, 2)}\n\nAs ${persona.name}, critique your own reasoning and respond with JSON containing EXACTLY these fields:
+- blindSpotsIdentified: an array of strings listing potential blind spots in your reasoning
+- counterArguments: an array of strings with counter-arguments to consider
+- revisedPosition: either "approve" or "reject" (your final decision)
+- finalConfidence: a number from 0 to 100`,
       },
     ],
     CritiqueSchema
@@ -222,14 +235,12 @@ Voice: ${persona.voiceDescription}
       { role: 'system', content: personaPrompt },
       {
         role: 'user',
-        content: `${financialSummary}\n${purchaseSummary}\n\nYour research: ${JSON.stringify(research, null, 2)}\nYour reasoning: ${JSON.stringify(reasoning, null, 2)}\nYour critique: ${JSON.stringify(critique, null, 2)}\n\nAs ${persona.name}, cast your final vote.
-
-IMPORTANT: Your reasoning must be a clear 2-3 sentence justification that:
-1. States the PRIMARY financial reason for your vote (be specific, not generic)
-2. References actual numbers from the analysis (e.g., "At ${((purchasePrice / financialContext.discretionaryBudget) * 100).toFixed(1)}% of discretionary budget...")
-3. Reflects your unique perspective as ${persona.name}
-
-Also include 2-3 key factors that drove your decision and one of your signature catchphrases.`,
+        content: `${financialSummary}\n${purchaseSummary}\n\nYour research: ${JSON.stringify(research, null, 2)}\nYour reasoning: ${JSON.stringify(reasoning, null, 2)}\nYour critique: ${JSON.stringify(critique, null, 2)}\n\nAs ${persona.name}, cast your final vote and respond with JSON containing EXACTLY these fields:
+- vote: either "approve" or "reject"
+- reasoning: a 2-3 sentence justification explaining WHY (reference specific numbers like "At ${((purchasePrice / financialContext.discretionaryBudget) * 100).toFixed(1)}% of discretionary budget...")
+- confidence: a number from 0 to 100
+- keyFactors: an array of 2-3 strings with the main factors driving your decision
+- catchphrase: one of your signature catchphrases that fits this decision`,
       },
     ],
     VoteSchema
@@ -246,8 +257,11 @@ Also include 2-3 key factors that drove your decision and one of your signature 
 }
 
 export async function POST(request: NextRequest) {
+  let purchaseId: string | undefined;
+
   try {
-    const { purchaseId } = await request.json();
+    const body = await request.json();
+    purchaseId = body.purchaseId;
 
     if (!purchaseId) {
       return NextResponse.json({ error: 'Purchase ID is required' }, { status: 400 });
@@ -359,6 +373,15 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     console.error('Deliberation error:', error);
+
+    // Update purchase status to failed
+    if (purchaseId) {
+      await supabase
+        .from('purchase_requests')
+        .update({ status: 'failed' })
+        .eq('id', purchaseId);
+    }
+
     return NextResponse.json({ error: 'Deliberation failed' }, { status: 500 });
   }
 }

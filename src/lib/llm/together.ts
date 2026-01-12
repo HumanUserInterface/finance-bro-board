@@ -27,14 +27,21 @@ export async function complete<T>(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const schemaObj = (jsonSchema as any).definitions?.response || jsonSchema;
 
-    const schemaInstruction = `\n\nYou MUST respond with a valid JSON object. Here is the exact structure required:
+    // Extract field names for emphasis
+    const fieldNames = schemaObj.properties ? Object.keys(schemaObj.properties) : [];
+
+    const schemaInstruction = `\n\nYou MUST respond with a valid JSON object using EXACTLY these field names: ${fieldNames.join(', ')}
+
+Here is the exact structure required:
 ${JSON.stringify(schemaObj, null, 2)}
 
-CRITICAL INSTRUCTIONS:
-1. Your response must be ONLY the JSON object - no explanations, no markdown
-2. Every field in the schema is REQUIRED
-3. Arrays must contain at least one item
-4. Do not include any text before or after the JSON`;
+CRITICAL - YOU MUST FOLLOW THESE RULES:
+1. Use EXACTLY the field names shown above: ${fieldNames.join(', ')}
+2. Do NOT invent your own field names
+3. Do NOT use snake_case - use camelCase as shown
+4. Your response must be ONLY the JSON object - no other text
+5. Every field is REQUIRED - include all of them
+6. Arrays must contain at least one string item`;
 
     processedMessages = processedMessages.map((msg) => {
       if (msg.role === 'system') {

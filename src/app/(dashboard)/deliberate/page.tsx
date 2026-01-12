@@ -9,7 +9,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { Gavel, Loader2, CheckCircle2, XCircle, Clock } from 'lucide-react';
+import { Gavel, Loader2, CheckCircle2, XCircle, Clock, AlertCircle, Trash2, RotateCcw } from 'lucide-react';
 import type { Tables } from '@/types/database';
 
 type PurchaseRequest = Tables<'purchase_requests'>;
@@ -133,9 +133,46 @@ export default function DeliberatePage() {
         return <Badge variant="secondary" className="bg-black/5 text-black"><CheckCircle2 className="h-3 w-3 mr-1" /> Approved</Badge>;
       case 'rejected':
         return <Badge variant="secondary" className="bg-black/5 text-black"><XCircle className="h-3 w-3 mr-1" /> Rejected</Badge>;
+      case 'failed':
+        return <Badge variant="secondary" className="bg-black/20 text-black"><AlertCircle className="h-3 w-3 mr-1" /> Failed</Badge>;
       default:
         return null;
     }
+  }
+
+  async function handleDelete(id: string) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (supabase.from('purchase_requests') as any)
+      .delete()
+      .eq('id', id);
+    fetchRecentRequests();
+  }
+
+  async function handleRetry(request: PurchaseRequest) {
+    // Update status to pending first
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (supabase.from('purchase_requests') as any)
+      .update({ status: 'deliberating' })
+      .eq('id', request.id);
+
+    fetchRecentRequests();
+
+    // Trigger deliberation API
+    try {
+      const response = await fetch('/api/deliberate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ purchaseId: request.id }),
+      });
+
+      if (!response.ok) {
+        console.error('Deliberation failed');
+      }
+    } catch (err) {
+      console.error('Error triggering deliberation:', err);
+    }
+
+    fetchRecentRequests();
   }
 
   return (
@@ -283,7 +320,27 @@ export default function DeliberatePage() {
                         ${request.price.toLocaleString('en-US', { minimumFractionDigits: 2 })} &bull; {request.category}
                       </p>
                     </div>
-                    {getStatusBadge(request.status)}
+                    <div className="flex items-center gap-2">
+                      {getStatusBadge(request.status)}
+                      {request.status === 'failed' && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => handleRetry(request)}
+                          title="Retry deliberation"
+                        >
+                          <RotateCcw className="h-4 w-4" />
+                        </Button>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => handleDelete(request.id)}
+                        title="Delete request"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
                   </div>
                 ))}
               </div>

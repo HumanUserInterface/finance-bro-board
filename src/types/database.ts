@@ -256,7 +256,7 @@ export interface Database {
           url: string | null;
           urgency: 'low' | 'medium' | 'high';
           context: string | null;
-          status: 'pending' | 'deliberating' | 'approved' | 'rejected';
+          status: 'pending' | 'deliberating' | 'approved' | 'rejected' | 'failed';
           created_at: string;
           updated_at: string;
         };
@@ -271,7 +271,7 @@ export interface Database {
           url?: string | null;
           urgency: 'low' | 'medium' | 'high';
           context?: string | null;
-          status?: 'pending' | 'deliberating' | 'approved' | 'rejected';
+          status?: 'pending' | 'deliberating' | 'approved' | 'rejected' | 'failed';
         };
         Update: {
           item?: string;
@@ -282,7 +282,7 @@ export interface Database {
           url?: string | null;
           urgency?: 'low' | 'medium' | 'high';
           context?: string | null;
-          status?: 'pending' | 'deliberating' | 'approved' | 'rejected';
+          status?: 'pending' | 'deliberating' | 'approved' | 'rejected' | 'failed';
           updated_at?: string;
         };
       };
