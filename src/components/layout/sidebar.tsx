@@ -9,6 +9,7 @@ import {
   CreditCard,
   Target,
   PiggyBank,
+  ArrowLeftRight,
   PlusCircle,
   History,
   Users,
@@ -18,6 +19,7 @@ import { cn } from '@/lib/utils';
 
 const navigation = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
+  { name: 'Transactions', href: '/transactions', icon: ArrowLeftRight },
   { name: 'Income', href: '/budget/income', icon: Wallet },
   { name: 'Expenses', href: '/budget/expenses', icon: Receipt },
   { name: 'Bills', href: '/budget/bills', icon: CreditCard },

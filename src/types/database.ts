@@ -399,6 +399,45 @@ export interface Database {
           updated_at?: string;
         };
       };
+      transactions: {
+        Row: {
+          id: string;
+          user_id: string;
+          description: string;
+          amount: number;
+          type: 'expense' | 'income' | 'transfer';
+          category: string;
+          date: string;
+          merchant: string | null;
+          notes: string | null;
+          is_recurring: boolean;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          description: string;
+          amount: number;
+          type: 'expense' | 'income' | 'transfer';
+          category: string;
+          date?: string;
+          merchant?: string | null;
+          notes?: string | null;
+          is_recurring?: boolean;
+        };
+        Update: {
+          description?: string;
+          amount?: number;
+          type?: 'expense' | 'income' | 'transfer';
+          category?: string;
+          date?: string;
+          merchant?: string | null;
+          notes?: string | null;
+          is_recurring?: boolean;
+          updated_at?: string;
+        };
+      };
     };
   };
 }
