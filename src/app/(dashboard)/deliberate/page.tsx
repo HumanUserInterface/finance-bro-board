@@ -9,10 +9,13 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Gavel, Loader2, CheckCircle2, XCircle, Clock, AlertCircle, Trash2, RotateCcw } from 'lucide-react';
 import type { Tables } from '@/types/database';
 
 type PurchaseRequest = Tables<'purchase_requests'>;
+type Deliberation = Tables<'deliberations'>;
+type MemberResult = Tables<'member_results'>;
 
 const categories = [
   'Electronics',
@@ -38,6 +41,11 @@ export default function DeliberatePage() {
   const [recentRequests, setRecentRequests] = useState<PurchaseRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [selectedRequest, setSelectedRequest] = useState<PurchaseRequest | null>(null);
+  const [deliberation, setDeliberation] = useState<Deliberation | null>(null);
+  const [memberResults, setMemberResults] = useState<MemberResult[]>([]);
+  const [loadingDetails, setLoadingDetails] = useState(false);
   const supabase = createClient();
 
   // Form state
@@ -123,21 +131,56 @@ export default function DeliberatePage() {
     fetchRecentRequests();
   }
 
-  function getStatusBadge(status: PurchaseRequest['status']) {
+  function getStatusBadge(status: PurchaseRequest['status'], clickable = false) {
+    const baseClass = clickable ? 'cursor-pointer hover:opacity-80' : '';
     switch (status) {
       case 'pending':
-        return <Badge variant="secondary" className="bg-black/5 text-black"><Clock className="h-3 w-3 mr-1" /> Pending</Badge>;
+        return <Badge variant="secondary" className={`bg-black/5 text-black ${baseClass}`}><Clock className="h-3 w-3 mr-1" /> Pending</Badge>;
       case 'deliberating':
-        return <Badge variant="secondary" className="bg-black/10 text-black"><Loader2 className="h-3 w-3 mr-1 animate-spin" /> Deliberating</Badge>;
+        return <Badge variant="secondary" className={`bg-black/10 text-black ${baseClass}`}><Loader2 className="h-3 w-3 mr-1 animate-spin" /> Deliberating</Badge>;
       case 'approved':
-        return <Badge variant="secondary" className="bg-black/5 text-black"><CheckCircle2 className="h-3 w-3 mr-1" /> Approved</Badge>;
+        return <Badge variant="secondary" className={`bg-green-100 text-green-800 ${baseClass}`}><CheckCircle2 className="h-3 w-3 mr-1" /> Approved</Badge>;
       case 'rejected':
-        return <Badge variant="secondary" className="bg-black/5 text-black"><XCircle className="h-3 w-3 mr-1" /> Rejected</Badge>;
+        return <Badge variant="secondary" className={`bg-red-100 text-red-800 ${baseClass}`}><XCircle className="h-3 w-3 mr-1" /> Rejected</Badge>;
       case 'failed':
-        return <Badge variant="secondary" className="bg-black/20 text-black"><AlertCircle className="h-3 w-3 mr-1" /> Failed</Badge>;
+        return <Badge variant="secondary" className={`bg-black/20 text-black ${baseClass}`}><AlertCircle className="h-3 w-3 mr-1" /> Failed</Badge>;
       default:
         return null;
     }
+  }
+
+  async function openDetails(request: PurchaseRequest) {
+    if (request.status !== 'approved' && request.status !== 'rejected') return;
+
+    setSelectedRequest(request);
+    setDetailOpen(true);
+    setLoadingDetails(true);
+
+    // Fetch deliberation
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: delib } = await (supabase
+      .from('deliberations')
+      .select('*')
+      .eq('purchase_id', request.id)
+      .single() as any);
+
+    if (delib) {
+      setDeliberation(delib as Deliberation);
+
+      // Fetch member results
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: results } = await (supabase
+        .from('member_results')
+        .select('*')
+        .eq('deliberation_id', delib.id)
+        .order('persona_name') as any);
+
+      if (results) {
+        setMemberResults(results);
+      }
+    }
+
+    setLoadingDetails(false);
   }
 
   async function handleDelete(id: string) {
@@ -314,14 +357,19 @@ export default function DeliberatePage() {
               <div className="space-y-4">
                 {recentRequests.map((request) => (
                   <div key={request.id} className="flex items-center justify-between border-b pb-3 last:border-0">
-                    <div>
+                    <div
+                      className={request.status === 'approved' || request.status === 'rejected' ? 'cursor-pointer hover:opacity-70' : ''}
+                      onClick={() => openDetails(request)}
+                    >
                       <p className="font-medium">{request.item}</p>
                       <p className="text-sm text-muted-foreground">
                         ${request.price.toLocaleString('en-US', { minimumFractionDigits: 2 })} &bull; {request.category}
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
-                      {getStatusBadge(request.status)}
+                      <div onClick={() => openDetails(request)}>
+                        {getStatusBadge(request.status, request.status === 'approved' || request.status === 'rejected')}
+                      </div>
                       {request.status === 'failed' && (
                         <Button
                           variant="ghost"
@@ -335,7 +383,7 @@ export default function DeliberatePage() {
                       <Button
                         variant="ghost"
                         size="icon"
-                        onClick={() => handleDelete(request.id)}
+                        onClick={(e) => { e.stopPropagation(); handleDelete(request.id); }}
                         title="Delete request"
                       >
                         <Trash2 className="h-4 w-4" />
@@ -348,6 +396,82 @@ export default function DeliberatePage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Detail Dialog */}
+      <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
+        <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {selectedRequest?.item}
+              {selectedRequest && getStatusBadge(selectedRequest.status)}
+            </DialogTitle>
+            <DialogDescription>
+              ${selectedRequest?.price.toLocaleString('en-US', { minimumFractionDigits: 2 })} &bull; {selectedRequest?.category}
+            </DialogDescription>
+          </DialogHeader>
+
+          {loadingDetails ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+            </div>
+          ) : deliberation ? (
+            <div className="space-y-6">
+              {/* Summary */}
+              <div className="p-4 bg-black/5 rounded-lg">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="font-medium">Final Decision</span>
+                  <span className={`text-lg font-bold ${deliberation.final_decision === 'approve' ? 'text-green-600' : 'text-red-600'}`}>
+                    {deliberation.final_decision === 'approve' ? 'APPROVED' : 'REJECTED'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                  <span className="text-green-600">{deliberation.approve_count} approve</span>
+                  <span className="text-red-600">{deliberation.reject_count} reject</span>
+                  {deliberation.is_unanimous && <span className="font-medium">Unanimous</span>}
+                </div>
+              </div>
+
+              {/* Individual Votes */}
+              <div>
+                <h3 className="font-semibold mb-3">Board Member Votes</h3>
+                <div className="space-y-3">
+                  {memberResults.map((result) => {
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    const vote = result.final_vote as any;
+                    return (
+                      <div key={result.id} className="border rounded-lg p-3">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="font-medium">{result.persona_name}</span>
+                          <Badge className={vote?.vote === 'approve' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}>
+                            {vote?.vote === 'approve' ? 'Approve' : 'Reject'} ({vote?.confidence}%)
+                          </Badge>
+                        </div>
+                        {vote?.reasoning && (
+                          <p className="text-sm text-muted-foreground mb-2">{vote.reasoning}</p>
+                        )}
+                        {vote?.keyFactors && vote.keyFactors.length > 0 && (
+                          <div className="flex flex-wrap gap-1">
+                            {vote.keyFactors.map((factor: string, i: number) => (
+                              <span key={i} className="text-xs bg-black/5 px-2 py-0.5 rounded">
+                                {factor}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        {vote?.catchphrase && (
+                          <p className="text-xs italic text-muted-foreground mt-2">&ldquo;{vote.catchphrase}&rdquo;</p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <p className="text-center text-muted-foreground py-8">No deliberation data found.</p>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
