@@ -34,10 +34,10 @@ const CritiqueSchema = z.object({
 
 const VoteSchema = z.object({
   vote: z.enum(['approve', 'reject']),
-  reasoning: z.string(),
+  reasoning: z.string().describe('A clear 2-3 sentence justification explaining WHY you are voting this way. Reference specific numbers (price, budget %, savings impact) and your unique perspective. Do NOT just say "good value" - explain the specific financial reasoning.'),
   confidence: z.number().min(0).max(100),
-  keyFactors: z.array(z.string()),
-  catchphrase: z.string(),
+  keyFactors: z.array(z.string()).describe('The 2-3 most important factors that drove your decision'),
+  catchphrase: z.string().describe('One of your signature catchphrases that fits this decision'),
 });
 
 interface FinancialContext {
@@ -222,7 +222,14 @@ Voice: ${persona.voiceDescription}
       { role: 'system', content: personaPrompt },
       {
         role: 'user',
-        content: `${financialSummary}\n${purchaseSummary}\n\nYour research: ${JSON.stringify(research, null, 2)}\nYour reasoning: ${JSON.stringify(reasoning, null, 2)}\nYour critique: ${JSON.stringify(critique, null, 2)}\n\nAs ${persona.name}, cast your final vote. Be decisive and include one of your signature catchphrases.`,
+        content: `${financialSummary}\n${purchaseSummary}\n\nYour research: ${JSON.stringify(research, null, 2)}\nYour reasoning: ${JSON.stringify(reasoning, null, 2)}\nYour critique: ${JSON.stringify(critique, null, 2)}\n\nAs ${persona.name}, cast your final vote.
+
+IMPORTANT: Your reasoning must be a clear 2-3 sentence justification that:
+1. States the PRIMARY financial reason for your vote (be specific, not generic)
+2. References actual numbers from the analysis (e.g., "At ${((purchasePrice / financialContext.discretionaryBudget) * 100).toFixed(1)}% of discretionary budget...")
+3. Reflects your unique perspective as ${persona.name}
+
+Also include 2-3 key factors that drove your decision and one of your signature catchphrases.`,
       },
     ],
     VoteSchema

@@ -24,12 +24,17 @@ export async function complete<T>(
   if (schema) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const jsonSchema = zodToJsonSchema(schema as any, 'response');
-    const schemaInstruction = `\n\nYou MUST respond with valid JSON matching this schema:\n${JSON.stringify(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (jsonSchema as any).definitions?.response || jsonSchema,
-      null,
-      2
-    )}\n\nRespond ONLY with the JSON object, no other text.`;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const schemaObj = (jsonSchema as any).definitions?.response || jsonSchema;
+
+    const schemaInstruction = `\n\nYou MUST respond with a valid JSON object. Here is the exact structure required:
+${JSON.stringify(schemaObj, null, 2)}
+
+CRITICAL INSTRUCTIONS:
+1. Your response must be ONLY the JSON object - no explanations, no markdown
+2. Every field in the schema is REQUIRED
+3. Arrays must contain at least one item
+4. Do not include any text before or after the JSON`;
 
     processedMessages = processedMessages.map((msg) => {
       if (msg.role === 'system') {
@@ -41,7 +46,7 @@ export async function complete<T>(
     if (!processedMessages.some((m) => m.role === 'system')) {
       processedMessages.unshift({
         role: 'system',
-        content: `You are a helpful assistant.${schemaInstruction}`,
+        content: `You are a helpful assistant that always responds in valid JSON.${schemaInstruction}`,
       });
     }
   }
@@ -51,16 +56,19 @@ export async function complete<T>(
     messages: processedMessages as Together.Chat.CompletionCreateParams['messages'],
     temperature,
     max_tokens: 2048,
+    // Force JSON mode for models that support it
+    response_format: schema ? { type: 'json_object' } : undefined,
   });
 
   const content = response.choices[0]?.message?.content ?? '';
 
   if (schema) {
     let jsonContent = content.trim();
+
+    // Remove markdown code blocks if present
     if (jsonContent.startsWith('```json')) {
       jsonContent = jsonContent.slice(7);
-    }
-    if (jsonContent.startsWith('```')) {
+    } else if (jsonContent.startsWith('```')) {
       jsonContent = jsonContent.slice(3);
     }
     if (jsonContent.endsWith('```')) {
@@ -68,8 +76,19 @@ export async function complete<T>(
     }
     jsonContent = jsonContent.trim();
 
-    const parsed = JSON.parse(jsonContent);
-    return schema.parse(parsed);
+    // Try to find JSON object in the response if it's wrapped in text
+    const jsonMatch = jsonContent.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      jsonContent = jsonMatch[0];
+    }
+
+    try {
+      const parsed = JSON.parse(jsonContent);
+      return schema.parse(parsed);
+    } catch (parseError) {
+      console.error('Failed to parse LLM response as JSON:', jsonContent.slice(0, 500));
+      throw parseError;
+    }
   }
 
   return content as T;
