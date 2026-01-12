@@ -49,16 +49,16 @@ export default function SignupPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-4">
-      <Card className="w-full max-w-md">
+    <div className="min-h-screen flex items-center justify-center bg-white p-4">
+      <Card className="w-full max-w-md border-black/10 rounded-none shadow-none">
         <CardHeader className="text-center">
-          <CardTitle className="text-2xl font-bold">Finance Bro Board</CardTitle>
+          <CardTitle className="text-2xl font-semibold tracking-tight">Finance Bro Board</CardTitle>
           <CardDescription>Create your account</CardDescription>
         </CardHeader>
         <CardContent>
           {success ? (
             <div className="text-center space-y-4">
-              <div className="text-green-500 text-lg font-medium">
+              <div className="text-black text-lg font-medium">
                 Account created successfully!
               </div>
               <p className="text-muted-foreground">
@@ -102,7 +102,7 @@ export default function SignupPage() {
                 />
               </div>
               {error && (
-                <div className="text-sm text-red-500 bg-red-50 p-3 rounded-md">
+                <div className="text-sm text-black bg-black/5 p-3 border border-black/10">
                   {error}
                 </div>
               )}

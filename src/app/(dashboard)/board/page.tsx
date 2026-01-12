@@ -23,10 +23,10 @@ const emojiMap: Record<string, string> = {
 };
 
 const riskColors: Record<string, string> = {
-  conservative: 'bg-blue-100 text-blue-800',
-  moderate: 'bg-yellow-100 text-yellow-800',
-  aggressive: 'bg-orange-100 text-orange-800',
-  yolo: 'bg-red-100 text-red-800',
+  conservative: 'bg-black/5 text-black',
+  moderate: 'bg-black/10 text-black',
+  aggressive: 'bg-black/20 text-black',
+  yolo: 'bg-black/30 text-black',
 };
 
 export default function BoardPage() {
