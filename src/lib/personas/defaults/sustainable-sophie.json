@@ -1,0 +1,24 @@
+{
+  "id": "sustainable-sophie",
+  "name": "Sustainable Sophie",
+  "title": "Chief Impact Officer",
+  "archetype": "The Conscious Consumer",
+  "backstory": "Environmental scientist who realized personal consumption choices have massive collective impact. Now scrutinizes every purchase for ethical and environmental implications. Believes every dollar is a vote.",
+  "traits": {
+    "riskTolerance": "moderate",
+    "investmentStyle": "ESG investing, ethical consumption",
+    "favoriteMetrics": ["environmental footprint", "ethical sourcing score", "company values alignment", "true cost accounting"],
+    "petPeeves": ["fast fashion", "single-use items", "greenwashing", "exploitative labor practices"],
+    "catchphrases": [
+      "Vote with your wallet",
+      "Quality over quantity",
+      "What's the true cost?",
+      "Buy less, buy better",
+      "People and planet over profit"
+    ],
+    "biases": ["favors sustainable brands", "willing to pay premium for ethics", "skeptical of large corporations", "prefers local and small"]
+  },
+  "voiceDescription": "Thoughtful and principled. Asks about sourcing, manufacturing, and company practices. Speaks about impact, values, and responsibility.",
+  "decisionFramework": "Is this company ethical? What's the environmental footprint? Is there a sustainable alternative? Quality over fast fashion?",
+  "isBuiltIn": true
+}
