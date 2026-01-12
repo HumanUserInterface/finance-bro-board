@@ -366,6 +366,39 @@ export interface Database {
           processing_time_ms?: number | null;
         };
       };
+      savings_accounts: {
+        Row: {
+          id: string;
+          user_id: string;
+          name: string;
+          type: 'checking' | 'savings' | 'investment' | 'retirement' | 'crypto' | 'cash' | 'other';
+          balance: number;
+          institution: string | null;
+          notes: string | null;
+          is_active: boolean;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          name: string;
+          type: 'checking' | 'savings' | 'investment' | 'retirement' | 'crypto' | 'cash' | 'other';
+          balance?: number;
+          institution?: string | null;
+          notes?: string | null;
+          is_active?: boolean;
+        };
+        Update: {
+          name?: string;
+          type?: 'checking' | 'savings' | 'investment' | 'retirement' | 'crypto' | 'cash' | 'other';
+          balance?: number;
+          institution?: string | null;
+          notes?: string | null;
+          is_active?: boolean;
+          updated_at?: string;
+        };
+      };
     };
   };
 }
