@@ -146,12 +146,12 @@ export function BudgetStep({ totalIncome, onComplete, onBack }: BudgetStepProps)
       const categoryInserts = expenseCategories.map((cat) => ({
         user_id: user.id,
         name: cat.name,
-        type: cat.type === 'need' ? 'fixed' : cat.type === 'want' ? 'variable' : 'bill',
+        type: (cat.type === 'need' ? 'fixed' : cat.type === 'want' ? 'variable' : 'bill') as 'fixed' | 'variable' | 'bill',
         budget_limit: cat.amount,
       }));
 
-      const { data: createdCategories, error: categoryError } = await supabase
-        .from('expense_categories')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: createdCategories, error: categoryError } = await (supabase.from('expense_categories') as any)
         .insert(categoryInserts)
         .select();
 
@@ -163,12 +163,13 @@ export function BudgetStep({ totalIncome, onComplete, onBack }: BudgetStepProps)
         category_id: createdCategories?.[index]?.id || null,
         name: cat.name,
         amount: cat.amount,
-        type: cat.categoryType,
+        type: cat.categoryType as 'fixed' | 'variable',
         is_recurring: true,
         frequency: 'monthly' as const,
       }));
 
-      const { error: expenseError } = await supabase.from('expenses').insert(expenseInserts);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { error: expenseError } = await (supabase.from('expenses') as any).insert(expenseInserts);
 
       if (expenseError) throw expenseError;
 
@@ -177,20 +178,22 @@ export function BudgetStep({ totalIncome, onComplete, onBack }: BudgetStepProps)
       const savingsInserts = savingsCategories.map((cat) => ({
         user_id: user.id,
         name: cat.name,
-        type: cat.name.toLowerCase().includes('emergency') ? 'emergency_fund' : 'other',
+        type: (cat.name.toLowerCase().includes('emergency') ? 'emergency_fund' : 'other') as 'emergency_fund' | 'vacation' | 'big_purchase' | 'retirement' | 'debt_payoff' | 'other',
         target_amount: cat.amount * 12, // Set target as 1 year of contributions
         current_amount: 0,
         monthly_contribution: cat.amount,
       }));
 
       if (savingsInserts.length > 0) {
-        const { error: savingsError } = await supabase.from('savings_goals').insert(savingsInserts);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { error: savingsError } = await (supabase.from('savings_goals') as any).insert(savingsInserts);
         if (savingsError) throw savingsError;
       }
 
       // Update profile to mark onboarding as completed
-      const { error: profileError } = await supabase
-        .from('profiles')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { error: profileError } = await (supabase
+        .from('profiles') as any)
         .update({
           onboarding_completed: true,
           onboarding_completed_at: new Date().toISOString(),

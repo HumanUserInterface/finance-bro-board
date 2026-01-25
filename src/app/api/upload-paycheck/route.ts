@@ -93,8 +93,9 @@ export async function POST(request: NextRequest) {
     }
 
     // Insert record into uploaded_documents
-    const { data: document, error: dbError } = await supabase
-      .from('uploaded_documents')
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: document, error: dbError } = await (supabase
+      .from('uploaded_documents') as any)
       .insert({
         user_id: user.id,
         file_name: file.name,

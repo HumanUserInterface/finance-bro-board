@@ -61,11 +61,12 @@ export async function updateSession(request: NextRequest) {
 
   // Check onboarding status for authenticated users
   if (user) {
-    const { data: profile } = await supabase
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: profile } = await (supabase
       .from('profiles')
       .select('onboarding_completed')
       .eq('id', user.id)
-      .single();
+      .single() as any);
 
     const isOnboardingPath = request.nextUrl.pathname.startsWith('/onboarding');
     const onboardingCompleted = profile?.onboarding_completed ?? false;

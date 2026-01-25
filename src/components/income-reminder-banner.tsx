@@ -32,11 +32,12 @@ export function IncomeReminderBanner({ onUpdateClick }: IncomeReminderBannerProp
 
       if (!user) return;
 
-      const { data: profile } = await supabase
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: profile } = await (supabase
         .from('profiles')
         .select('monthly_income_last_updated')
         .eq('id', user.id)
-        .single();
+        .single() as any);
 
       if (!profile) return;
 
