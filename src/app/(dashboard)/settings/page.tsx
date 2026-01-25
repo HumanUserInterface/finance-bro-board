@@ -121,14 +121,15 @@ export default function SettingsPage() {
     try {
       // Delete all user data in order (respecting foreign key constraints)
       // First get all deliberation IDs for this user
-      const { data: userDeliberations } = await supabase
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: userDeliberations } = await (supabase
         .from('deliberations')
         .select('id')
-        .eq('user_id', user.id);
+        .eq('user_id', user.id) as any);
 
       // Delete member_results for user's deliberations
       if (userDeliberations && userDeliberations.length > 0) {
-        const deliberationIds = userDeliberations.map(d => d.id);
+        const deliberationIds = userDeliberations.map((d: { id: string }) => d.id);
         await supabase.from('member_results').delete().in('deliberation_id', deliberationIds);
       }
 
