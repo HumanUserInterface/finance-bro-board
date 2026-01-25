@@ -120,7 +120,19 @@ export default function SettingsPage() {
 
     try {
       // Delete all user data in order (respecting foreign key constraints)
-      await supabase.from('member_results').delete().eq('deliberation_id', null); // Will be cascaded from deliberations
+      // First get all deliberation IDs for this user
+      const { data: userDeliberations } = await supabase
+        .from('deliberations')
+        .select('id')
+        .eq('user_id', user.id);
+
+      // Delete member_results for user's deliberations
+      if (userDeliberations && userDeliberations.length > 0) {
+        const deliberationIds = userDeliberations.map(d => d.id);
+        await supabase.from('member_results').delete().in('deliberation_id', deliberationIds);
+      }
+
+      // Delete rest of user data
       await supabase.from('deliberations').delete().eq('user_id', user.id);
       await supabase.from('purchase_requests').delete().eq('user_id', user.id);
       await supabase.from('transactions').delete().eq('user_id', user.id);
