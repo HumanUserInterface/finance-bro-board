@@ -7,7 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Settings, Check, Loader2 } from 'lucide-react';
+import { Settings, Check, Loader2, AlertTriangle, Trash2 } from 'lucide-react';
 import type { Tables } from '@/types/database';
 
 type Profile = Tables<'profiles'>;
@@ -41,6 +41,8 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState('');
+  const [deleting, setDeleting] = useState(false);
   const supabase = createClient();
 
   // Form state
@@ -100,6 +102,54 @@ export default function SettingsPage() {
     if (!error) {
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
+    }
+  }
+
+  async function handleDeleteAllData() {
+    if (deleteConfirm !== 'DELETE') {
+      return;
+    }
+
+    setDeleting(true);
+
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      setDeleting(false);
+      return;
+    }
+
+    try {
+      // Delete all user data in order (respecting foreign key constraints)
+      await supabase.from('member_results').delete().eq('deliberation_id', null); // Will be cascaded from deliberations
+      await supabase.from('deliberations').delete().eq('user_id', user.id);
+      await supabase.from('purchase_requests').delete().eq('user_id', user.id);
+      await supabase.from('transactions').delete().eq('user_id', user.id);
+      await supabase.from('expenses').delete().eq('user_id', user.id);
+      await supabase.from('bills').delete().eq('user_id', user.id);
+      await supabase.from('savings_goals').delete().eq('user_id', user.id);
+      await supabase.from('savings_accounts').delete().eq('user_id', user.id);
+      await supabase.from('income_sources').delete().eq('user_id', user.id);
+      await supabase.from('expense_categories').delete().eq('user_id', user.id);
+
+      // Reset profile to defaults
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (supabase.from('profiles') as any)
+        .update({
+          display_name: null,
+          currency: 'USD',
+          timezone: 'UTC',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', user.id);
+
+      setDeleteConfirm('');
+      setDeleting(false);
+
+      // Refresh the page to show clean state
+      window.location.reload();
+    } catch (error) {
+      console.error('Error deleting data:', error);
+      setDeleting(false);
     }
   }
 
@@ -221,6 +271,62 @@ export default function SettingsPage() {
           >
             Sign Out
           </Button>
+        </CardContent>
+      </Card>
+
+      <Card className="border-destructive/50">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-destructive">
+            <AlertTriangle className="h-5 w-5" />
+            Testing & Debugging
+          </CardTitle>
+          <CardDescription>
+            Dangerous operations for testing purposes only
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="rounded-lg border border-destructive/50 bg-destructive/5 p-4 space-y-4">
+            <div className="space-y-2">
+              <p className="text-sm font-medium flex items-center gap-2">
+                <Trash2 className="h-4 w-4" />
+                Delete All Data
+              </p>
+              <p className="text-sm text-muted-foreground">
+                This will permanently delete all your financial data including income, expenses,
+                bills, savings goals, transactions, purchase requests, and deliberations.
+                Your profile will be reset to defaults. This action cannot be undone.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="deleteConfirm">
+                Type <span className="font-mono font-bold">DELETE</span> to confirm
+              </Label>
+              <Input
+                id="deleteConfirm"
+                placeholder="DELETE"
+                value={deleteConfirm}
+                onChange={(e) => setDeleteConfirm(e.target.value)}
+                className="font-mono"
+              />
+            </div>
+            <Button
+              variant="destructive"
+              onClick={handleDeleteAllData}
+              disabled={deleteConfirm !== 'DELETE' || deleting}
+            >
+              {deleting ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Deleting All Data...
+                </>
+              ) : (
+                <>
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Delete All Data
+                </>
+              )}
+            </Button>
+          </div>
         </CardContent>
       </Card>
     </div>
