@@ -8,8 +8,9 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { Plus, Pencil, Trash2, DollarSign } from 'lucide-react';
+import { Plus, Pencil, Trash2, DollarSign, Upload } from 'lucide-react';
 import type { Tables } from '@/types/database';
+import { MonthlyIncomeUpdate } from '@/components/monthly-income-update';
 
 type IncomeSource = Tables<'income_sources'>;
 
@@ -18,6 +19,8 @@ const incomeTypes = [
   { value: 'side_income', label: 'Side Income' },
   { value: 'investments', label: 'Investments' },
   { value: 'rental', label: 'Rental Income' },
+  { value: 'apl', label: 'APL (Housing Aid)' },
+  { value: 'prime_activite', label: 'Prime d\'Activité' },
   { value: 'other', label: 'Other' },
 ];
 
@@ -34,6 +37,7 @@ export default function IncomePage() {
   const [incomes, setIncomes] = useState<IncomeSource[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
   const [editingIncome, setEditingIncome] = useState<IncomeSource | null>(null);
   const supabase = createClient();
 
@@ -138,13 +142,18 @@ export default function IncomePage() {
           <h1 className="text-3xl font-bold">Income Sources</h1>
           <p className="text-muted-foreground">Manage your income streams</p>
         </div>
-        <Dialog open={dialogOpen} onOpenChange={(open) => { setDialogOpen(open); if (!open) resetForm(); }}>
-          <DialogTrigger asChild>
-            <Button>
-              <Plus className="mr-2 h-4 w-4" />
-              Add Income
-            </Button>
-          </DialogTrigger>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => setUpdateDialogOpen(true)}>
+            <Upload className="mr-2 h-4 w-4" />
+            Update Monthly Income
+          </Button>
+          <Dialog open={dialogOpen} onOpenChange={(open) => { setDialogOpen(open); if (!open) resetForm(); }}>
+            <DialogTrigger asChild>
+              <Button>
+                <Plus className="mr-2 h-4 w-4" />
+                Add Income
+              </Button>
+            </DialogTrigger>
           <DialogContent>
             <DialogHeader>
               <DialogTitle>{editingIncome ? 'Edit' : 'Add'} Income Source</DialogTitle>
@@ -277,6 +286,13 @@ export default function IncomePage() {
           ))}
         </div>
       )}
+
+      {/* Monthly Income Update Dialog */}
+      <MonthlyIncomeUpdate
+        isOpen={updateDialogOpen}
+        onClose={() => setUpdateDialogOpen(false)}
+        onUpdate={fetchIncomes}
+      />
     </div>
   );
 }

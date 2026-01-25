@@ -16,6 +16,9 @@ export interface Database {
           avatar_url: string | null;
           currency: string;
           timezone: string;
+          onboarding_completed: boolean;
+          onboarding_completed_at: string | null;
+          monthly_income_last_updated: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -25,6 +28,9 @@ export interface Database {
           avatar_url?: string | null;
           currency?: string;
           timezone?: string;
+          onboarding_completed?: boolean;
+          onboarding_completed_at?: string | null;
+          monthly_income_last_updated?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -34,6 +40,9 @@ export interface Database {
           avatar_url?: string | null;
           currency?: string;
           timezone?: string;
+          onboarding_completed?: boolean;
+          onboarding_completed_at?: string | null;
+          monthly_income_last_updated?: string | null;
           updated_at?: string;
         };
       };
@@ -42,7 +51,7 @@ export interface Database {
           id: string;
           user_id: string;
           name: string;
-          type: 'salary' | 'side_income' | 'investments' | 'rental' | 'other';
+          type: 'salary' | 'side_income' | 'investments' | 'rental' | 'apl' | 'prime_activite' | 'other';
           amount: number;
           frequency: 'weekly' | 'biweekly' | 'monthly' | 'quarterly' | 'annually' | 'one_time';
           is_active: boolean;
@@ -56,7 +65,7 @@ export interface Database {
           id?: string;
           user_id: string;
           name: string;
-          type: 'salary' | 'side_income' | 'investments' | 'rental' | 'other';
+          type: 'salary' | 'side_income' | 'investments' | 'rental' | 'apl' | 'prime_activite' | 'other';
           amount: number;
           frequency: 'weekly' | 'biweekly' | 'monthly' | 'quarterly' | 'annually' | 'one_time';
           is_active?: boolean;
@@ -66,7 +75,7 @@ export interface Database {
         };
         Update: {
           name?: string;
-          type?: 'salary' | 'side_income' | 'investments' | 'rental' | 'other';
+          type?: 'salary' | 'side_income' | 'investments' | 'rental' | 'apl' | 'prime_activite' | 'other';
           amount?: number;
           frequency?: 'weekly' | 'biweekly' | 'monthly' | 'quarterly' | 'annually' | 'one_time';
           is_active?: boolean;
@@ -436,6 +445,36 @@ export interface Database {
           notes?: string | null;
           is_recurring?: boolean;
           updated_at?: string;
+        };
+      };
+      uploaded_documents: {
+        Row: {
+          id: string;
+          user_id: string;
+          file_name: string;
+          file_path: string;
+          file_size: number;
+          mime_type: string;
+          document_type: 'paycheck' | 'benefit_statement' | 'other';
+          parsed_data: Json | null;
+          upload_date: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          file_name: string;
+          file_path: string;
+          file_size: number;
+          mime_type: string;
+          document_type: 'paycheck' | 'benefit_statement' | 'other';
+          parsed_data?: Json | null;
+          upload_date?: string;
+        };
+        Update: {
+          file_name?: string;
+          file_path?: string;
+          parsed_data?: Json | null;
         };
       };
     };

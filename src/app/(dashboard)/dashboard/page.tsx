@@ -9,6 +9,8 @@ import { Badge } from '@/components/ui/badge';
 import Link from 'next/link';
 import { PlusCircle, TrendingUp, TrendingDown, Wallet, Target, PiggyBank, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
 import type { Tables } from '@/types/database';
+import { IncomeReminderBanner } from '@/components/income-reminder-banner';
+import { MonthlyIncomeUpdate } from '@/components/monthly-income-update';
 
 type PurchaseRequest = Tables<'purchase_requests'>;
 type Deliberation = Tables<'deliberations'>;
@@ -37,6 +39,7 @@ export default function DashboardPage() {
   const [stats, setStats] = useState<FinancialStats | null>(null);
   const [recentDeliberations, setRecentDeliberations] = useState<RecentDeliberation[]>([]);
   const [loading, setLoading] = useState(true);
+  const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
   const supabase = createClient();
 
   useEffect(() => {
@@ -140,6 +143,9 @@ export default function DashboardPage() {
           </Button>
         </Link>
       </div>
+
+      {/* Income Reminder Banner */}
+      <IncomeReminderBanner onUpdateClick={() => setUpdateDialogOpen(true)} />
 
       {/* Stats Grid */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
@@ -339,6 +345,13 @@ export default function DashboardPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Monthly Income Update Dialog */}
+      <MonthlyIncomeUpdate
+        isOpen={updateDialogOpen}
+        onClose={() => setUpdateDialogOpen(false)}
+        onUpdate={fetchData}
+      />
     </div>
   );
 }
