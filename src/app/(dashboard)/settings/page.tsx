@@ -178,8 +178,9 @@ export default function SettingsPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold">Settings</h1>
-        <p className="text-muted-foreground">Manage your account preferences</p>
+        <p className="text-muted-foreground">Manage your account preferences and testing options</p>
       </div>
+
 
       <Card>
         <CardHeader>
