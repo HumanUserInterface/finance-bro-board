@@ -7,7 +7,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Settings, Check, Loader2, AlertTriangle, Trash2 } from 'lucide-react';
+import { Settings, Check, Loader2, AlertTriangle, Trash2, RefreshCw } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import type { Tables } from '@/types/database';
 
 type Profile = Tables<'profiles'>;
@@ -43,7 +44,9 @@ export default function SettingsPage() {
   const [saved, setSaved] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState('');
   const [deleting, setDeleting] = useState(false);
+  const [resettingOnboarding, setResettingOnboarding] = useState(false);
   const supabase = createClient();
+  const router = useRouter();
 
   // Form state
   const [displayName, setDisplayName] = useState('');
@@ -105,6 +108,35 @@ export default function SettingsPage() {
     }
   }
 
+  async function handleResetOnboarding() {
+    setResettingOnboarding(true);
+
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      setResettingOnboarding(false);
+      return;
+    }
+
+    try {
+      // Reset onboarding flags in profile
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (supabase.from('profiles') as any)
+        .update({
+          onboarding_completed: false,
+          onboarding_completed_at: null,
+          monthly_income_last_updated: null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', user.id);
+
+      // Redirect to onboarding
+      router.push('/onboarding');
+    } catch (error) {
+      console.error('Error resetting onboarding:', error);
+      setResettingOnboarding(false);
+    }
+  }
+
   async function handleDeleteAllData() {
     if (deleteConfirm !== 'DELETE') {
       return;
@@ -143,6 +175,7 @@ export default function SettingsPage() {
       await supabase.from('savings_accounts').delete().eq('user_id', user.id);
       await supabase.from('income_sources').delete().eq('user_id', user.id);
       await supabase.from('expense_categories').delete().eq('user_id', user.id);
+      await supabase.from('uploaded_documents').delete().eq('user_id', user.id);
 
       // Reset profile to defaults
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -151,6 +184,9 @@ export default function SettingsPage() {
           display_name: null,
           currency: 'USD',
           timezone: 'UTC',
+          onboarding_completed: false,
+          onboarding_completed_at: null,
+          monthly_income_last_updated: null,
           updated_at: new Date().toISOString(),
         })
         .eq('id', user.id);
@@ -299,6 +335,38 @@ export default function SettingsPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
+          <div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950 p-4 space-y-4">
+            <div className="space-y-2">
+              <p className="text-sm font-medium flex items-center gap-2">
+                <RefreshCw className="h-4 w-4" />
+                Re-run Onboarding Wizard
+              </p>
+              <p className="text-sm text-muted-foreground">
+                Reset your onboarding status to go through the setup wizard again.
+                This will allow you to re-upload your paycheck and reconfigure your budget.
+                Your existing data will not be deleted.
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              onClick={handleResetOnboarding}
+              disabled={resettingOnboarding}
+              className="border-blue-300 dark:border-blue-700"
+            >
+              {resettingOnboarding ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Resetting...
+                </>
+              ) : (
+                <>
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                  Re-run Onboarding
+                </>
+              )}
+            </Button>
+          </div>
+
           <div className="rounded-lg border border-destructive/50 bg-destructive/5 p-4 space-y-4">
             <div className="space-y-2">
               <p className="text-sm font-medium flex items-center gap-2">
