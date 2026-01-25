@@ -7,7 +7,7 @@ import { Progress } from '@/components/ui/progress';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import Link from 'next/link';
-import { PlusCircle, TrendingUp, TrendingDown, Wallet, Target, PiggyBank, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
+import { PlusCircle, TrendingUp, TrendingDown, Wallet, Target, PiggyBank, CheckCircle2, XCircle, Loader2, Upload } from 'lucide-react';
 import type { Tables } from '@/types/database';
 import { IncomeReminderBanner } from '@/components/income-reminder-banner';
 import { MonthlyIncomeUpdate } from '@/components/monthly-income-update';
@@ -136,12 +136,18 @@ export default function DashboardPage() {
           <h1 className="text-3xl font-bold">Dashboard</h1>
           <p className="text-muted-foreground">Your financial overview</p>
         </div>
-        <Link href="/deliberate">
-          <Button>
-            <PlusCircle className="mr-2 h-4 w-4" />
-            New Purchase
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => setUpdateDialogOpen(true)}>
+            <Upload className="mr-2 h-4 w-4" />
+            Update Income
           </Button>
-        </Link>
+          <Link href="/deliberate">
+            <Button>
+              <PlusCircle className="mr-2 h-4 w-4" />
+              New Purchase
+            </Button>
+          </Link>
+        </div>
       </div>
 
       {/* Income Reminder Banner */}
