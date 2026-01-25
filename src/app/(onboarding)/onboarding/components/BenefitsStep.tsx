@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { Home, Briefcase } from 'lucide-react';
 
 interface BenefitsStepProps {
   apl: number;
@@ -50,11 +51,11 @@ export function BenefitsStep({
 
       {/* APL Input */}
       <div className="space-y-4">
-        <div className="bg-blue-50 dark:bg-blue-950 rounded-xl p-6 space-y-4">
+        <div className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 space-y-4">
           <div className="flex items-start justify-between">
             <div className="flex items-center gap-3">
-              <div className="w-12 h-12 bg-blue-100 dark:bg-blue-900 rounded-lg flex items-center justify-center text-2xl">
-                🏠
+              <div className="w-12 h-12 bg-black dark:bg-white rounded-lg flex items-center justify-center">
+                <Home className="h-6 w-6 text-white dark:text-black" />
               </div>
               <div>
                 <h3 className="font-semibold text-slate-900 dark:text-slate-100">
@@ -65,7 +66,7 @@ export function BenefitsStep({
             </div>
             <button
               onClick={() => setShowAplInfo(!showAplInfo)}
-              className="text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 text-sm font-medium"
+              className="text-slate-700 dark:text-slate-300 hover:text-black dark:hover:text-white text-sm font-medium"
             >
               {showAplInfo ? 'Hide' : 'Learn more'}
             </button>
@@ -89,17 +90,17 @@ export function BenefitsStep({
               onChange={(e) => handleAplChange(e.target.value)}
               placeholder="0"
               min="0"
-              className="w-full px-4 py-3 border border-slate-300 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className="w-full px-4 py-3 border border-slate-300 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-black dark:focus:ring-white focus:border-transparent"
             />
           </div>
         </div>
 
         {/* Prime d'Activité Input */}
-        <div className="bg-green-50 dark:bg-green-950 rounded-xl p-6 space-y-4">
+        <div className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 space-y-4">
           <div className="flex items-start justify-between">
             <div className="flex items-center gap-3">
-              <div className="w-12 h-12 bg-green-100 dark:bg-green-900 rounded-lg flex items-center justify-center text-2xl">
-                💼
+              <div className="w-12 h-12 bg-black dark:bg-white rounded-lg flex items-center justify-center">
+                <Briefcase className="h-6 w-6 text-white dark:text-black" />
               </div>
               <div>
                 <h3 className="font-semibold text-slate-900 dark:text-slate-100">
@@ -110,7 +111,7 @@ export function BenefitsStep({
             </div>
             <button
               onClick={() => setShowPrimeInfo(!showPrimeInfo)}
-              className="text-green-600 dark:text-green-400 hover:text-green-700 dark:hover:text-green-300 text-sm font-medium"
+              className="text-slate-700 dark:text-slate-300 hover:text-black dark:hover:text-white text-sm font-medium"
             >
               {showPrimeInfo ? 'Hide' : 'Learn more'}
             </button>
@@ -134,7 +135,7 @@ export function BenefitsStep({
               onChange={(e) => handlePrimeChange(e.target.value)}
               placeholder="0"
               min="0"
-              className="w-full px-4 py-3 border border-slate-300 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-green-500 focus:border-transparent"
+              className="w-full px-4 py-3 border border-slate-300 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-black dark:focus:ring-white focus:border-transparent"
             />
           </div>
         </div>
@@ -162,7 +163,7 @@ export function BenefitsStep({
         </button>
         <button
           onClick={onNext}
-          className="px-8 py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition-colors"
+          className="px-8 py-3 bg-black dark:bg-white text-white dark:text-black hover:bg-slate-800 dark:hover:bg-slate-200 font-semibold rounded-lg transition-colors"
         >
           Continue
         </button>

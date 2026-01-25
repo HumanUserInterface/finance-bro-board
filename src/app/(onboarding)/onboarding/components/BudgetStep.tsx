@@ -251,7 +251,7 @@ export function BudgetStep({ totalIncome, onComplete, onBack }: BudgetStepProps)
           </div>
           <button
             onClick={() => addCategory(type)}
-            className="text-sm text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 font-medium"
+            className="text-sm text-slate-700 dark:text-slate-300 hover:text-black dark:hover:text-white font-medium"
           >
             + Add
           </button>
@@ -380,11 +380,11 @@ export function BudgetStep({ totalIncome, onComplete, onBack }: BudgetStepProps)
         <button
           onClick={handleSubmit}
           disabled={isSubmitting || isOverBudget}
-          className="px-8 py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition-colors disabled:bg-slate-300 disabled:cursor-not-allowed dark:disabled:bg-slate-700 flex items-center gap-2"
+          className="px-8 py-3 bg-black dark:bg-white text-white dark:text-black hover:bg-slate-800 dark:hover:bg-slate-200 font-semibold rounded-lg transition-colors disabled:bg-slate-300 disabled:cursor-not-allowed dark:disabled:bg-slate-700 flex items-center gap-2"
         >
           {isSubmitting ? (
             <>
-              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              <div className="w-4 h-4 border-2 border-white dark:border-black border-t-transparent rounded-full animate-spin" />
               Completing...
             </>
           ) : (

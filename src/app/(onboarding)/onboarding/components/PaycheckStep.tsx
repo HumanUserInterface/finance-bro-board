@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef } from 'react';
+import { FileText } from 'lucide-react';
 
 interface PaycheckStepProps {
   salary: number | null;
@@ -113,8 +114,8 @@ export function PaycheckStep({ salary, onSalaryChange, onNext, onBack }: Paychec
         onDragLeave={handleDragLeave}
         className={`border-2 border-dashed rounded-xl p-12 text-center cursor-pointer transition-colors ${
           isDragging
-            ? 'border-blue-500 bg-blue-50 dark:bg-blue-950'
-            : 'border-slate-300 dark:border-slate-700 hover:border-blue-400 dark:hover:border-blue-600'
+            ? 'border-black dark:border-white bg-slate-50 dark:bg-slate-900'
+            : 'border-slate-300 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-600'
         }`}
       >
         <input
@@ -127,13 +128,13 @@ export function PaycheckStep({ salary, onSalaryChange, onNext, onBack }: Paychec
 
         {isUploading ? (
           <div className="space-y-4">
-            <div className="w-16 h-16 mx-auto border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
+            <div className="w-16 h-16 mx-auto border-4 border-black dark:border-white border-t-transparent rounded-full animate-spin" />
             <p className="text-slate-600 dark:text-slate-400">Analyzing your paycheck...</p>
           </div>
         ) : (
           <div className="space-y-4">
-            <div className="w-16 h-16 mx-auto bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center text-3xl">
-              📄
+            <div className="w-16 h-16 mx-auto bg-black dark:bg-white rounded-full flex items-center justify-center">
+              <FileText className="h-8 w-8 text-white dark:text-black" />
             </div>
             <div>
               <p className="text-lg font-medium text-slate-900 dark:text-slate-100">
@@ -172,7 +173,7 @@ export function PaycheckStep({ salary, onSalaryChange, onNext, onBack }: Paychec
             value={editedSalary}
             onChange={(e) => handleManualInput(e.target.value)}
             placeholder="2500"
-            className="w-full px-4 py-3 border border-slate-300 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className="w-full px-4 py-3 border border-slate-300 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-black dark:focus:ring-white focus:border-transparent"
           />
         </div>
       </div>
@@ -188,7 +189,7 @@ export function PaycheckStep({ salary, onSalaryChange, onNext, onBack }: Paychec
         <button
           onClick={handleNext}
           disabled={salary === null || salary <= 0}
-          className="px-8 py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition-colors disabled:bg-slate-300 disabled:cursor-not-allowed dark:disabled:bg-slate-700"
+          className="px-8 py-3 bg-black dark:bg-white text-white dark:text-black hover:bg-slate-800 dark:hover:bg-slate-200 font-semibold rounded-lg transition-colors disabled:bg-slate-300 disabled:cursor-not-allowed dark:disabled:bg-slate-700"
         >
           Continue
         </button>

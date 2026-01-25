@@ -71,7 +71,7 @@ export function WelcomeStep({ onNext }: WelcomeStepProps) {
       <div className="pt-6">
         <button
           onClick={onNext}
-          className="px-8 py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition-colors"
+          className="px-8 py-3 bg-black dark:bg-white text-white dark:text-black hover:bg-slate-800 dark:hover:bg-slate-200 font-semibold rounded-lg transition-colors"
         >
           Get Started
         </button>

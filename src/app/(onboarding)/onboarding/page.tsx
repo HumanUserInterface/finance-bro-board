@@ -66,7 +66,7 @@ export default function OnboardingPage() {
                 <div
                   className={`w-10 h-10 rounded-full flex items-center justify-center font-semibold transition-colors ${
                     index <= currentStep
-                      ? 'bg-blue-600 text-white'
+                      ? 'bg-black dark:bg-white text-white dark:text-black'
                       : 'bg-slate-300 dark:bg-slate-700 text-slate-600 dark:text-slate-400'
                   }`}
                 >
@@ -86,7 +86,7 @@ export default function OnboardingPage() {
                 <div
                   className={`w-16 md:w-24 h-1 mx-4 mb-6 transition-colors ${
                     index < currentStep
-                      ? 'bg-blue-600'
+                      ? 'bg-black dark:bg-white'
                       : 'bg-slate-300 dark:bg-slate-700'
                   }`}
                 />
