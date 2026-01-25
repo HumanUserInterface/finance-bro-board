@@ -6,66 +6,104 @@ const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
 const ALLOWED_MIME_TYPES = ['application/pdf'];
 
 export async function POST(request: NextRequest) {
+  console.log('[UPLOAD] Starting paycheck upload request');
+
   try {
     // Create authenticated Supabase client
+    console.log('[UPLOAD] Creating Supabase client');
     const supabase = await createClient();
 
     // Check authentication
+    console.log('[UPLOAD] Checking authentication');
     const {
       data: { user },
       error: authError,
     } = await supabase.auth.getUser();
 
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (authError) {
+      console.error('[UPLOAD] Auth error:', authError);
+      return NextResponse.json({ error: 'Authentication failed', details: authError.message }, { status: 401 });
     }
 
+    if (!user) {
+      console.error('[UPLOAD] No user found');
+      return NextResponse.json({ error: 'Unauthorized - no user session' }, { status: 401 });
+    }
+
+    console.log('[UPLOAD] User authenticated:', user.id);
+
     // Parse form data
+    console.log('[UPLOAD] Parsing form data');
     const formData = await request.formData();
     const file = formData.get('file') as File | null;
 
     if (!file) {
+      console.error('[UPLOAD] No file in form data');
       return NextResponse.json({ error: 'No file provided' }, { status: 400 });
     }
 
+    console.log('[UPLOAD] File received:', { name: file.name, size: file.size, type: file.type });
+
     // Validate file type
     if (!ALLOWED_MIME_TYPES.includes(file.type)) {
+      console.error('[UPLOAD] Invalid file type:', file.type);
       return NextResponse.json(
-        { error: 'Invalid file type. Only PDF files are allowed.' },
+        { error: 'Invalid file type. Only PDF files are allowed.', receivedType: file.type },
         { status: 400 }
       );
     }
 
     // Validate file size
     if (file.size > MAX_FILE_SIZE) {
+      console.error('[UPLOAD] File too large:', file.size);
       return NextResponse.json(
-        { error: 'File too large. Maximum size is 5MB.' },
+        { error: 'File too large. Maximum size is 5MB.', receivedSize: file.size },
         { status: 400 }
       );
     }
 
     // Convert file to buffer
+    console.log('[UPLOAD] Converting file to buffer');
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
+    console.log('[UPLOAD] Buffer created, size:', buffer.length);
 
     // Parse PDF
+    console.log('[UPLOAD] Starting PDF parsing');
     let parsedData;
     try {
       parsedData = await parseFrenchPaycheck(buffer);
+      console.log('[UPLOAD] PDF parsed successfully:', {
+        netSalary: parsedData.netSalary,
+        confidence: parsedData.confidence,
+        hasMonth: !!parsedData.month,
+        hasEmployer: !!parsedData.employer,
+      });
     } catch (error) {
-      console.error('PDF parsing error:', error);
+      console.error('[UPLOAD] PDF parsing error:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const errorStack = error instanceof Error ? error.stack : '';
+      console.error('[UPLOAD] Error details:', { message: errorMessage, stack: errorStack });
       return NextResponse.json(
-        { error: 'Failed to parse PDF. Please ensure this is a valid paycheck document.' },
+        {
+          error: 'Failed to parse PDF. Please ensure this is a valid paycheck document.',
+          details: errorMessage,
+        },
         { status: 400 }
       );
     }
 
     // Validate parsed data
+    console.log('[UPLOAD] Validating parsed data');
     if (!validatePaycheckData(parsedData)) {
+      console.error('[UPLOAD] Invalid paycheck data:', parsedData);
       return NextResponse.json(
         {
           error: 'Could not extract valid salary information from this PDF.',
-          parsedData,
+          parsedData: {
+            netSalary: parsedData.netSalary,
+            confidence: parsedData.confidence,
+          },
         },
         { status: 400 }
       );
@@ -75,8 +113,10 @@ export async function POST(request: NextRequest) {
     const timestamp = Date.now();
     const sanitizedFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
     const filePath = `${user.id}/${timestamp}-${sanitizedFileName}`;
+    console.log('[UPLOAD] Generated file path:', filePath);
 
     // Upload to Supabase Storage
+    console.log('[UPLOAD] Uploading to Supabase Storage');
     const { error: uploadError } = await supabase.storage
       .from('paychecks')
       .upload(filePath, buffer, {
@@ -85,14 +125,20 @@ export async function POST(request: NextRequest) {
       });
 
     if (uploadError) {
-      console.error('Storage upload error:', uploadError);
+      console.error('[UPLOAD] Storage upload error:', uploadError);
       return NextResponse.json(
-        { error: 'Failed to upload file to storage.' },
+        {
+          error: 'Failed to upload file to storage. The storage bucket may not exist.',
+          details: uploadError.message,
+        },
         { status: 500 }
       );
     }
 
+    console.log('[UPLOAD] File uploaded successfully');
+
     // Insert record into uploaded_documents
+    console.log('[UPLOAD] Inserting document record');
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: document, error: dbError } = await (supabase
       .from('uploaded_documents') as any)
@@ -115,14 +161,19 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (dbError) {
-      console.error('Database insert error:', dbError);
+      console.error('[UPLOAD] Database insert error:', dbError);
       // Try to clean up uploaded file
       await supabase.storage.from('paychecks').remove([filePath]);
-      return NextResponse.json({ error: 'Failed to save document record.' }, { status: 500 });
+      return NextResponse.json({
+        error: 'Failed to save document record. The table may not exist.',
+        details: dbError.message,
+      }, { status: 500 });
     }
 
+    console.log('[UPLOAD] Document record created:', document.id);
+
     // Return success with parsed data
-    return NextResponse.json({
+    const response = {
       success: true,
       document: {
         id: document.id,
@@ -136,11 +187,21 @@ export async function POST(request: NextRequest) {
         employer: parsedData.employer,
         confidence: parsedData.confidence,
       },
-    });
+    };
+
+    console.log('[UPLOAD] Returning success response');
+    return NextResponse.json(response);
   } catch (error) {
-    console.error('Upload error:', error);
+    console.error('[UPLOAD] Unexpected error:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const errorStack = error instanceof Error ? error.stack : '';
+    console.error('[UPLOAD] Error details:', { message: errorMessage, stack: errorStack });
+
     return NextResponse.json(
-      { error: 'An unexpected error occurred during upload.' },
+      {
+        error: 'An unexpected error occurred during upload.',
+        details: errorMessage,
+      },
       { status: 500 }
     );
   }
