@@ -1,4 +1,5 @@
-import pdf from 'pdf-parse';
+// @ts-ignore - pdf-parse doesn't have proper ESM types
+import * as pdfParse from 'pdf-parse';
 
 export interface ParsedPaycheckData {
   netSalary: number | null;
@@ -17,6 +18,8 @@ export interface ParsedPaycheckData {
 export async function parseFrenchPaycheck(buffer: Buffer): Promise<ParsedPaycheckData> {
   try {
     // Parse PDF to text
+    // @ts-ignore - pdf-parse doesn't have proper ESM types
+    const pdf = pdfParse.default || pdfParse;
     const data = await pdf(buffer);
     const text = data.text;
 

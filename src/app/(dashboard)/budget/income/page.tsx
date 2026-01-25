@@ -147,7 +147,13 @@ export default function IncomePage() {
             <Upload className="mr-2 h-4 w-4" />
             Update Monthly Income
           </Button>
-          <Dialog open={dialogOpen} onOpenChange={(open) => { setDialogOpen(open); if (!open) resetForm(); }}>
+          <Dialog
+            open={dialogOpen}
+            onOpenChange={(open) => {
+              setDialogOpen(open);
+              if (!open) resetForm();
+            }}
+          >
             <DialogTrigger asChild>
               <Button>
                 <Plus className="mr-2 h-4 w-4" />
@@ -221,6 +227,7 @@ export default function IncomePage() {
             </form>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       {/* Monthly Total Card */}
