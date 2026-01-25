@@ -16,6 +16,14 @@ const jetbrainsMono = JetBrains_Mono({
 export const metadata: Metadata = {
   title: "Finance Bro Board",
   description: "Your personal board of 17 AI financial advisors",
+  icons: {
+    icon: [
+      { url: '/favicon.svg', type: 'image/svg+xml' },
+      { url: '/favicon-16x16.png', sizes: '16x16', type: 'image/png' },
+      { url: '/favicon-32x32.png', sizes: '32x32', type: 'image/png' },
+    ],
+    apple: { url: '/favicon-192x192.png', sizes: '192x192', type: 'image/png' },
+  },
 };
 
 export default function RootLayout({
