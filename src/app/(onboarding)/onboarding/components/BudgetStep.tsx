@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import { Home, Target, PiggyBank } from 'lucide-react';
 
 interface BudgetStepProps {
   totalIncome: number;
@@ -141,37 +142,49 @@ export function BudgetStep({ totalIncome, onComplete, onBack }: BudgetStepProps)
         throw new Error('Not authenticated');
       }
 
-      // Create expense categories
-      const expenseCategories = categories.filter((cat) => !cat.isSavingsGoal);
-      const categoryInserts = expenseCategories.map((cat) => ({
-        user_id: user.id,
-        name: cat.name,
-        type: (cat.type === 'need' ? 'fixed' : cat.type === 'want' ? 'variable' : 'bill') as 'fixed' | 'variable' | 'bill',
-        budget_limit: cat.amount,
-      }));
-
+      // Check for existing expenses to avoid duplicates
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: createdCategories, error: categoryError } = await (supabase.from('expense_categories') as any)
-        .insert(categoryInserts)
-        .select();
+      const { data: existingExpenses } = await (supabase
+        .from('expenses')
+        .select('*')
+        .eq('user_id', user.id) as any);
 
-      if (categoryError) throw categoryError;
+      const hasExistingData = existingExpenses && existingExpenses.length > 0;
 
-      // Create expenses with budget limits
-      const expenseInserts = expenseCategories.map((cat, index) => ({
-        user_id: user.id,
-        category_id: createdCategories?.[index]?.id || null,
-        name: cat.name,
-        amount: cat.amount,
-        type: cat.categoryType as 'fixed' | 'variable',
-        is_recurring: true,
-        frequency: 'monthly' as const,
-      }));
+      // Only create expenses if user has no existing data
+      if (!hasExistingData) {
+        // Create expense categories
+        const expenseCategories = categories.filter((cat) => !cat.isSavingsGoal);
+        const categoryInserts = expenseCategories.map((cat) => ({
+          user_id: user.id,
+          name: cat.name,
+          type: (cat.type === 'need' ? 'fixed' : cat.type === 'want' ? 'variable' : 'bill') as 'fixed' | 'variable' | 'bill',
+          budget_limit: cat.amount,
+        }));
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { error: expenseError } = await (supabase.from('expenses') as any).insert(expenseInserts);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: createdCategories, error: categoryError } = await (supabase.from('expense_categories') as any)
+          .insert(categoryInserts)
+          .select();
 
-      if (expenseError) throw expenseError;
+        if (categoryError) throw categoryError;
+
+        // Create expenses with budget limits
+        const expenseInserts = expenseCategories.map((cat, index) => ({
+          user_id: user.id,
+          category_id: createdCategories?.[index]?.id || null,
+          name: cat.name,
+          amount: cat.amount,
+          type: cat.categoryType as 'fixed' | 'variable',
+          is_recurring: true,
+          frequency: 'monthly' as const,
+        }));
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { error: expenseError } = await (supabase.from('expenses') as any).insert(expenseInserts);
+
+        if (expenseError) throw expenseError;
+      }
 
       // Create savings goals
       const savingsCategories = categories.filter((cat) => cat.isSavingsGoal);
@@ -220,7 +233,7 @@ export function BudgetStep({ totalIncome, onComplete, onBack }: BudgetStepProps)
   const renderCategorySection = (
     title: string,
     type: 'need' | 'want' | 'saving',
-    emoji: string,
+    Icon: React.ElementType,
     colorClass: string
   ) => {
     const sectionCategories = categories.filter((cat) => cat.type === type);
@@ -230,7 +243,7 @@ export function BudgetStep({ totalIncome, onComplete, onBack }: BudgetStepProps)
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <span className="text-2xl">{emoji}</span>
+            <Icon className="h-5 w-5 text-black dark:text-white" />
             <h3 className="text-xl font-semibold text-slate-900 dark:text-slate-100">{title}</h3>
             <span className={`text-sm font-medium ${colorClass}`}>
               {sectionTotal.toFixed(1)}%
@@ -303,20 +316,20 @@ export function BudgetStep({ totalIncome, onComplete, onBack }: BudgetStepProps)
         {renderCategorySection(
           'Needs (Essential Expenses)',
           'need',
-          '🏠',
-          'text-blue-600 dark:text-blue-400'
+          Home,
+          'text-black dark:text-white'
         )}
         {renderCategorySection(
           'Wants (Lifestyle Expenses)',
           'want',
-          '🎯',
-          'text-purple-600 dark:text-purple-400'
+          Target,
+          'text-black dark:text-white'
         )}
         {renderCategorySection(
           'Savings (Future Goals)',
           'saving',
-          '💰',
-          'text-green-600 dark:text-green-400'
+          PiggyBank,
+          'text-black dark:text-white'
         )}
       </div>
 

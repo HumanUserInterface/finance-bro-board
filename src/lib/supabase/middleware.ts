@@ -71,11 +71,30 @@ export async function updateSession(request: NextRequest) {
     const isOnboardingPath = request.nextUrl.pathname.startsWith('/onboarding');
     const onboardingCompleted = profile?.onboarding_completed ?? false;
 
-    // If onboarding not completed and trying to access protected routes, redirect to onboarding
+    // Only enforce onboarding for truly new users (no data at all)
+    // Check if user has any existing data
     if (!onboardingCompleted && isProtectedPath && !isOnboardingPath) {
-      const url = request.nextUrl.clone();
-      url.pathname = '/onboarding';
-      return NextResponse.redirect(url);
+      // Check if they have any income sources or expenses (existing user with data)
+      const { data: incomes } = await supabase
+        .from('income_sources')
+        .select('id')
+        .eq('user_id', user.id)
+        .limit(1);
+
+      const { data: expenses } = await supabase
+        .from('expenses')
+        .select('id')
+        .eq('user_id', user.id)
+        .limit(1);
+
+      // Only redirect to onboarding if they have NO data (truly new user)
+      const hasData = (incomes && incomes.length > 0) || (expenses && expenses.length > 0);
+
+      if (!hasData) {
+        const url = request.nextUrl.clone();
+        url.pathname = '/onboarding';
+        return NextResponse.redirect(url);
+      }
     }
 
     // If onboarding completed and trying to access onboarding page, redirect to dashboard

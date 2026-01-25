@@ -1,5 +1,7 @@
 'use client';
 
+import { Wallet, Home, BarChart3, Target } from 'lucide-react';
+
 interface WelcomeStepProps {
   onNext: () => void;
 }
@@ -17,9 +19,9 @@ export function WelcomeStep({ onNext }: WelcomeStepProps) {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-left">
-        <div className="bg-slate-50 dark:bg-slate-800 rounded-xl p-6 space-y-2">
-          <div className="w-12 h-12 bg-blue-100 dark:bg-blue-900 rounded-lg flex items-center justify-center text-2xl mb-2">
-            💰
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 space-y-2">
+          <div className="w-12 h-12 bg-black dark:bg-white rounded-lg flex items-center justify-center mb-2">
+            <Wallet className="h-6 w-6 text-white dark:text-black" />
           </div>
           <h3 className="font-semibold text-slate-900 dark:text-slate-100">
             Upload Your Paycheck
@@ -29,9 +31,9 @@ export function WelcomeStep({ onNext }: WelcomeStepProps) {
           </p>
         </div>
 
-        <div className="bg-slate-50 dark:bg-slate-800 rounded-xl p-6 space-y-2">
-          <div className="w-12 h-12 bg-green-100 dark:bg-green-900 rounded-lg flex items-center justify-center text-2xl mb-2">
-            🏠
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 space-y-2">
+          <div className="w-12 h-12 bg-black dark:bg-white rounded-lg flex items-center justify-center mb-2">
+            <Home className="h-6 w-6 text-white dark:text-black" />
           </div>
           <h3 className="font-semibold text-slate-900 dark:text-slate-100">
             Add Social Benefits
@@ -41,9 +43,9 @@ export function WelcomeStep({ onNext }: WelcomeStepProps) {
           </p>
         </div>
 
-        <div className="bg-slate-50 dark:bg-slate-800 rounded-xl p-6 space-y-2">
-          <div className="w-12 h-12 bg-purple-100 dark:bg-purple-900 rounded-lg flex items-center justify-center text-2xl mb-2">
-            📊
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 space-y-2">
+          <div className="w-12 h-12 bg-black dark:bg-white rounded-lg flex items-center justify-center mb-2">
+            <BarChart3 className="h-6 w-6 text-white dark:text-black" />
           </div>
           <h3 className="font-semibold text-slate-900 dark:text-slate-100">
             Create Your Budget
@@ -53,9 +55,9 @@ export function WelcomeStep({ onNext }: WelcomeStepProps) {
           </p>
         </div>
 
-        <div className="bg-slate-50 dark:bg-slate-800 rounded-xl p-6 space-y-2">
-          <div className="w-12 h-12 bg-orange-100 dark:bg-orange-900 rounded-lg flex items-center justify-center text-2xl mb-2">
-            🎯
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 space-y-2">
+          <div className="w-12 h-12 bg-black dark:bg-white rounded-lg flex items-center justify-center mb-2">
+            <Target className="h-6 w-6 text-white dark:text-black" />
           </div>
           <h3 className="font-semibold text-slate-900 dark:text-slate-100">
             Set Savings Goals
