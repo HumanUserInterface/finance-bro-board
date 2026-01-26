@@ -186,10 +186,17 @@ function parseN26Statement(
       const datePos = textBefore.lastIndexOf(dateMatch[0]);
       let description = textBefore.substring(0, datePos).trim();
 
-      // Clean up description
+      // Clean up description - remove IBAN/BIC/bank noise
       description = description
         .replace(/Mastercard.*$/i, '')
         .replace(/Date de valeur.*$/i, '')
+        .replace(/\d{10,}/g, '') // Remove long number sequences (IBAN fragments)
+        .replace(/[A-Z]{4}[A-Z0-9]{2,}[A-Z0-9]*/g, '') // Remove BIC-like codes
+        .replace(/BIC[:\s]+\S+/gi, '')
+        .replace(/IBAN[:\s]+\S+/gi, '')
+        .replace(/Émis le.*$/i, '')
+        .replace(/Emis le.*$/i, '')
+        .replace(/•/g, '')
         .replace(/\s+/g, ' ')
         .trim();
 
@@ -199,15 +206,23 @@ function parseN26Statement(
         description = parts[parts.length - 1] || description.substring(description.length - 80);
       }
 
-      // Skip internal transfers
+      // Skip internal transfers and garbage data
       if (
         description.startsWith('De ') ||
         description.startsWith('Vers ') ||
         description.includes('Arrondis') ||
         description.includes('VICTOR MICHEL') ||
         description.includes('IBAN') ||
+        description.includes('BIC:') ||
+        description.includes('BIC ') ||
         description.includes('Relevé') ||
         description.includes('Solde') ||
+        description.includes('Émis le') ||
+        description.includes('Emis le') ||
+        description.includes('NTSBFRM') ||
+        description.includes('N26 Bank') ||
+        /^\d{6,}/.test(description) || // Starts with long number (IBAN fragment)
+        /^[A-Z0-9]{8,}$/.test(description) || // Just a code
         description.length < 2
       ) {
         continue;
@@ -260,10 +275,17 @@ function parseN26Statement(
       const textBefore = pageText.substring(Math.max(0, dateMatch.index - 200), dateMatch.index);
       let description = textBefore.trim();
 
-      // Clean up description
+      // Clean up description - remove IBAN/BIC/bank noise
       description = description
         .replace(/Mastercard.*$/i, '')
         .replace(/.*Date de valeur[^€]*€\s*/i, '')
+        .replace(/\d{10,}/g, '') // Remove long number sequences (IBAN fragments)
+        .replace(/[A-Z]{4}[A-Z0-9]{2,}[A-Z0-9]*/g, '') // Remove BIC-like codes
+        .replace(/BIC[:\s]+\S+/gi, '')
+        .replace(/IBAN[:\s]+\S+/gi, '')
+        .replace(/Émis le.*$/i, '')
+        .replace(/Emis le.*$/i, '')
+        .replace(/•/g, '')
         .replace(/\s+/g, ' ')
         .trim();
 
@@ -273,16 +295,24 @@ function parseN26Statement(
         description = parts[parts.length - 1] || description.substring(description.length - 80);
       }
 
-      // Skip internal transfers and headers
+      // Skip internal transfers, headers, and garbage data
       if (
         description.startsWith('De ') ||
         description.startsWith('Vers ') ||
         description.includes('Arrondis') ||
         description.includes('VICTOR MICHEL') ||
         description.includes('IBAN') ||
+        description.includes('BIC:') ||
+        description.includes('BIC ') ||
         description.includes('Relevé') ||
         description.includes('Solde') ||
         description.includes('Description') ||
+        description.includes('Émis le') ||
+        description.includes('Emis le') ||
+        description.includes('NTSBFRM') ||
+        description.includes('N26 Bank') ||
+        /^\d{6,}/.test(description) || // Starts with long number (IBAN fragment)
+        /^[A-Z0-9]{8,}$/.test(description) || // Just a code
         description.length < 2
       ) {
         continue;
@@ -315,18 +345,30 @@ function parseN26Statement(
 
         if (!dateMatch || !amountMatch) continue;
 
-        const description = line
+        let description = line
           .substring(0, line.indexOf(dateMatch[0]))
           .replace(/Mastercard.*$/i, '')
+          .replace(/\d{10,}/g, '')
+          .replace(/[A-Z]{4}[A-Z0-9]{2,}[A-Z0-9]*/g, '')
+          .replace(/BIC[:\s]+\S+/gi, '')
+          .replace(/Émis le.*$/i, '')
+          .replace(/•/g, '')
           .replace(/\s+/g, ' ')
           .trim();
 
-        // Skip internal transfers
+        // Skip internal transfers and garbage
         if (
           description.startsWith('De ') ||
           description.startsWith('Vers ') ||
           description.includes('Arrondis') ||
           description.includes('VICTOR MICHEL') ||
+          description.includes('IBAN') ||
+          description.includes('BIC:') ||
+          description.includes('BIC ') ||
+          description.includes('Émis le') ||
+          description.includes('NTSBFRM') ||
+          /^\d{6,}/.test(description) ||
+          /^[A-Z0-9]{8,}$/.test(description) ||
           description.length < 3
         ) {
           continue;
