@@ -14,6 +14,7 @@ import {
   History,
   Users,
   Settings,
+  Scale,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -25,6 +26,7 @@ const navigation = [
   { name: 'Bills', href: '/budget/bills', icon: CreditCard },
   { name: 'Goals', href: '/budget/goals', icon: Target },
   { name: 'Savings', href: '/budget/savings', icon: PiggyBank },
+  { name: 'Balancing', href: '/budget/balancing', icon: Scale },
   { name: 'New Purchase', href: '/deliberate', icon: PlusCircle },
   { name: 'History', href: '/history', icon: History },
   { name: 'Board', href: '/board', icon: Users },

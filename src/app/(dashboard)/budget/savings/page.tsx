@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { Plus, Pencil, Trash2, PiggyBank, Building2, TrendingUp, Landmark, Bitcoin, Banknote, ArrowDownCircle, CheckCircle2 } from 'lucide-react';
+import { Plus, Pencil, Trash2, PiggyBank, Building2, TrendingUp, Landmark, Bitcoin, Banknote, ArrowDownCircle, CheckCircle2, X } from 'lucide-react';
 import type { Tables } from '@/types/database';
 
 type SavingsAccount = Tables<'savings_accounts'>;
@@ -48,8 +48,8 @@ export default function SavingsPage() {
   // Withdraw state
   const [withdrawAmount, setWithdrawAmount] = useState('');
 
-  // Track last withdrawal per account (accountId -> { amount, date })
-  const [lastWithdrawals, setLastWithdrawals] = useState<Record<string, { amount: number; date: string }>>({});
+  // Track all withdrawals per account (accountName -> array of transactions)
+  const [withdrawalsByAccount, setWithdrawalsByAccount] = useState<Record<string, { id: string; amount: number; date: string }[]>>({});
 
   useEffect(() => {
     fetchAccounts();
@@ -91,19 +91,21 @@ export default function SavingsPage() {
       .order('date', { ascending: false });
 
     if (!error && data) {
-      // Group by account name and get the most recent for each
-      const withdrawalsByAccount: Record<string, { amount: number; date: string }> = {};
+      // Group all withdrawals by account name
+      const grouped: Record<string, { id: string; amount: number; date: string }[]> = {};
       data.forEach((tx: any) => {
         // Extract account name from category "Savings Withdrawal: AccountName"
         const accountName = tx.category.replace('Savings Withdrawal: ', '');
-        if (!withdrawalsByAccount[accountName]) {
-          withdrawalsByAccount[accountName] = {
-            amount: tx.amount,
-            date: tx.date,
-          };
+        if (!grouped[accountName]) {
+          grouped[accountName] = [];
         }
+        grouped[accountName].push({
+          id: tx.id,
+          amount: tx.amount,
+          date: tx.date,
+        });
       });
-      setLastWithdrawals(withdrawalsByAccount);
+      setWithdrawalsByAccount(grouped);
     }
   }
 
@@ -229,6 +231,26 @@ export default function SavingsPage() {
       .update({ is_active: false })
       .eq('id', id);
     fetchAccounts();
+  }
+
+  async function handleDeleteWithdrawal(transactionId: string, accountName: string, amount: number) {
+    // Delete the transaction
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (supabase.from('transactions') as any)
+      .delete()
+      .eq('id', transactionId);
+
+    // Refund the amount back to the account
+    const account = accounts.find((a) => a.name === accountName);
+    if (account) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (supabase.from('savings_accounts') as any)
+        .update({ balance: account.balance + amount, updated_at: new Date().toISOString() })
+        .eq('id', account.id);
+    }
+
+    fetchAccounts();
+    fetchLastWithdrawals();
   }
 
   function openEditDialog(account: SavingsAccount) {
@@ -514,7 +536,7 @@ export default function SavingsPage() {
       ) : (
         <div className="grid gap-4">
           {accounts.map((account) => {
-            const lastWithdrawal = lastWithdrawals[account.name];
+            const accountWithdrawals = withdrawalsByAccount[account.name] || [];
             return (
               <Card key={account.id}>
                 <CardContent className="py-4">
@@ -556,21 +578,36 @@ export default function SavingsPage() {
                       </div>
                     </div>
                   </div>
-                  {lastWithdrawal && (
+                  {accountWithdrawals.length > 0 && (
                     <div className="mt-3 pt-3 border-t border-slate-200 dark:border-slate-700">
                       <p className="text-xs font-medium text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-2">Recent Activity</p>
-                      <div className="bg-slate-50 dark:bg-slate-800/50 rounded-md px-3 py-2">
-                        <div className="flex items-center justify-between text-sm">
-                          <div className="flex items-center gap-3">
-                            <span className="text-slate-400 dark:text-slate-500 font-mono text-xs">
-                              {new Date(lastWithdrawal.date).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit' })}
-                            </span>
-                            <span className="text-slate-600 dark:text-slate-300">Withdrawal</span>
+                      <div className="space-y-1">
+                        {accountWithdrawals.slice(0, 5).map((withdrawal) => (
+                          <div key={withdrawal.id} className="bg-slate-50 dark:bg-slate-800/50 rounded-md px-3 py-2">
+                            <div className="flex items-center justify-between text-sm">
+                              <div className="flex items-center gap-3">
+                                <span className="text-slate-400 dark:text-slate-500 font-mono text-xs">
+                                  {new Date(withdrawal.date).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit' })}
+                                </span>
+                                <span className="text-slate-600 dark:text-slate-300">Withdrawal</span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono font-medium text-red-600 dark:text-red-400">
+                                  -€{withdrawal.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                                </span>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-6 w-6"
+                                  onClick={() => handleDeleteWithdrawal(withdrawal.id, account.name, withdrawal.amount)}
+                                  title="Delete withdrawal (refunds amount)"
+                                >
+                                  <X className="h-3 w-3 text-slate-400 hover:text-red-500" />
+                                </Button>
+                              </div>
+                            </div>
                           </div>
-                          <span className="font-mono font-medium text-red-600 dark:text-red-400">
-                            -€{lastWithdrawal.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                          </span>
-                        </div>
+                        ))}
                       </div>
                     </div>
                   )}
