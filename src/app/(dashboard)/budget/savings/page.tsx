@@ -557,10 +557,21 @@ export default function SavingsPage() {
                     </div>
                   </div>
                   {lastWithdrawal && (
-                    <div className="mt-2 pt-2 border-t border-slate-100 dark:border-slate-800">
-                      <p className="text-sm text-orange-600 dark:text-orange-400">
-                        Last withdrawal: €{lastWithdrawal.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })} on {new Date(lastWithdrawal.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                      </p>
+                    <div className="mt-3 pt-3 border-t border-slate-200 dark:border-slate-700">
+                      <p className="text-xs font-medium text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-2">Recent Activity</p>
+                      <div className="bg-slate-50 dark:bg-slate-800/50 rounded-md px-3 py-2">
+                        <div className="flex items-center justify-between text-sm">
+                          <div className="flex items-center gap-3">
+                            <span className="text-slate-400 dark:text-slate-500 font-mono text-xs">
+                              {new Date(lastWithdrawal.date).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit' })}
+                            </span>
+                            <span className="text-slate-600 dark:text-slate-300">Withdrawal</span>
+                          </div>
+                          <span className="font-mono font-medium text-red-600 dark:text-red-400">
+                            -€{lastWithdrawal.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                          </span>
+                        </div>
+                      </div>
                     </div>
                   )}
                 </CardContent>
