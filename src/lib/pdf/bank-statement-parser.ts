@@ -41,14 +41,14 @@ export async function parseBankStatement(buffer: Buffer): Promise<ParsedBankStat
         try {
           console.log('[BANK-PARSER] PDF parsed successfully');
 
-          // Extract text from all pages
-          let fullText = '';
-          const textItems: { x: number; y: number; text: string; page: number }[] = [];
+          // Extract text from all pages with page markers
+          const pageTexts: string[] = [];
 
           if (pdfData.Pages) {
             console.log('[BANK-PARSER] Processing', pdfData.Pages.length, 'pages');
 
-            pdfData.Pages.forEach((page, pageIndex) => {
+            pdfData.Pages.forEach((page) => {
+              let pageText = '';
               if (page.Texts) {
                 for (const text of page.Texts) {
                   if (text.R) {
@@ -60,25 +60,20 @@ export async function parseBankStatement(buffer: Buffer): Promise<ParsedBankStat
                         } catch {
                           decoded = run.T;
                         }
-                        fullText += decoded + ' ';
-                        textItems.push({
-                          x: text.x || 0,
-                          y: text.y || 0,
-                          text: decoded,
-                          page: pageIndex,
-                        });
+                        pageText += decoded + ' ';
                       }
                     }
                   }
                 }
               }
-              fullText += '\n';
+              pageTexts.push(pageText);
             });
           }
 
+          const fullText = pageTexts.join('\n---PAGE---\n');
           console.log('[BANK-PARSER] Extracted text length:', fullText.length);
 
-          const result = parseN26Statement(fullText, textItems);
+          const result = parseN26Statement(fullText, pageTexts);
           result.rawText = fullText;
 
           console.log('[BANK-PARSER] Parsing complete:', {
@@ -113,7 +108,7 @@ export async function parseBankStatement(buffer: Buffer): Promise<ParsedBankStat
  */
 function parseN26Statement(
   fullText: string,
-  textItems: { x: number; y: number; text: string; page: number }[]
+  pageTexts: string[]
 ): ParsedBankStatement {
   const transactions: ParsedTransaction[] = [];
   let bankName: string | null = null;
@@ -125,144 +120,161 @@ function parseN26Statement(
     confidence = 'medium';
   }
 
-  // N26 categories (French)
-  const knownCategories = [
-    'Revenus',
-    'Alimentation et épicerie',
-    'Commerces et services',
-    'Transfert sortant',
-    'Transfert entrant',
-    'Loisirs et sorties',
-    'Transports et voyages',
-    'Abonnements et factures',
-    'Santé et bien-être',
-    'Éducation',
-    'Autres',
-    'Retrait',
-    'Dépôt',
-    'Assurance',
-    'Loyer',
-  ];
-
-  // Pattern for dates: DD/MM/YYYY or DD.MM.YYYY or DD MM YYYY
-  const datePattern = /(\d{1,2})[\/\.\s](\d{1,2})[\/\.\s](\d{4})/g;
-
-  // Pattern for amounts: +X,XX € or -X,XX € or X,XX €
-  const amountPattern = /([+-]?\s*\d+[,.\s]*\d*)\s*€/g;
-
-  // Try to extract transactions by looking for date + description + amount patterns
-  const lines = fullText.split(/\n/);
-
-  for (const line of lines) {
-    // Skip header/footer lines
+  // Find pages that are main account (not "Espace" sub-accounts)
+  const mainAccountPages: string[] = [];
+  for (const pageText of pageTexts) {
+    // Skip "Espace" pages (sub-accounts) and "Vue d'ensemble" (summary) pages
     if (
-      line.includes('IBAN') ||
-      line.includes('BIC') ||
-      line.includes('Solde') ||
-      line.includes('Total') ||
-      line.length < 10
+      pageText.includes('Relevé Espace') ||
+      pageText.includes('Espaces vue d\'ensemble') ||
+      pageText.includes('Vue d\'ensemble')
     ) {
       continue;
     }
-
-    // Look for a date at the start or in the line
-    const dateMatch = line.match(/(\d{1,2})[\/\.\s](\d{1,2})[\/\.\s](\d{4})/);
-    if (!dateMatch) continue;
-
-    // Look for an amount
-    const amountMatches = [...line.matchAll(/([+-]?\s*[\d\s]+[,.]?\d*)\s*€/g)];
-    if (amountMatches.length === 0) continue;
-
-    // Get the last amount in the line (usually the transaction amount)
-    const lastAmountMatch = amountMatches[amountMatches.length - 1];
-    const amountStr = lastAmountMatch[1];
-    const amount = parseAmount(amountStr);
-    if (amount === null || amount === 0) continue;
-
-    // Extract description (between date and amount)
-    const dateEndIndex = dateMatch.index! + dateMatch[0].length;
-    const amountStartIndex = lastAmountMatch.index!;
-    let description = line.substring(dateEndIndex, amountStartIndex).trim();
-
-    // Try to find a category
-    let category: string | null = null;
-    for (const cat of knownCategories) {
-      if (line.includes(cat)) {
-        category = cat;
-        // Remove category from description
-        description = description.replace(cat, '').trim();
-        break;
-      }
+    // Only include main account pages
+    if (pageText.includes('Relevé de compte') || pageText.includes('Date de réservation')) {
+      mainAccountPages.push(pageText);
     }
-
-    // Clean up description
-    description = description.replace(/\s+/g, ' ').trim();
-    if (!description) description = 'Transaction';
-
-    // Format date as YYYY-MM-DD
-    const day = dateMatch[1].padStart(2, '0');
-    const month = dateMatch[2].padStart(2, '0');
-    const year = dateMatch[3];
-    const formattedDate = `${year}-${month}-${day}`;
-
-    transactions.push({
-      date: formattedDate,
-      description,
-      amount: Math.abs(amount),
-      type: amount > 0 ? 'income' : 'expense',
-      category,
-      rawLine: line.trim(),
-    });
   }
 
-  // If we didn't find transactions with the line-by-line approach, try pattern matching
-  if (transactions.length === 0) {
-    console.log('[BANK-PARSER] Line-by-line parsing found no transactions, trying pattern matching');
+  console.log('[BANK-PARSER] Found', mainAccountPages.length, 'main account pages');
 
-    // More aggressive pattern matching on full text
-    const dateMatches = [...fullText.matchAll(datePattern)];
-    const amountMatchesAll = [...fullText.matchAll(amountPattern)];
+  // N26 categories (French)
+  const knownCategories = [
+    'Bars et restaurants',
+    'Shopping',
+    'Courses alimentaires',
+    'Multimédia & Télécom',
+    'Frais professionnels',
+    'Santé et pharmacie',
+    'Transports',
+    'Loisirs',
+    'Revenus',
+  ];
 
-    console.log('[BANK-PARSER] Found', dateMatches.length, 'dates and', amountMatchesAll.length, 'amounts');
+  // Process each main account page
+  for (const pageText of mainAccountPages) {
+    // Split by common transaction patterns
+    // N26 format: MERCHANT_NAME [category info] DD.MM.YYYY [+/-]XX,XX€
 
-    // Try to pair dates with nearby amounts
-    for (const dateMatch of dateMatches) {
-      const datePos = dateMatch.index!;
-      const day = dateMatch[1].padStart(2, '0');
-      const month = dateMatch[2].padStart(2, '0');
-      const year = dateMatch[3];
+    // Look for amount patterns with explicit + or - sign
+    const transactionPattern = /([A-Z][A-Za-z0-9\s\*\.\-,\/&']+?)(?:Mastercard[^€]*?)?(\d{2}\.\d{2}\.\d{4})\s*([+-]?\d+[,.]?\d*)\s*€/g;
 
-      // Look for amount within 200 characters after the date
-      for (const amtMatch of amountMatchesAll) {
-        const amtPos = amtMatch.index!;
-        if (amtPos > datePos && amtPos - datePos < 200) {
-          const amount = parseAmount(amtMatch[1]);
-          if (amount !== null && amount !== 0) {
-            // Extract text between date and amount as description
-            let desc = fullText.substring(datePos + dateMatch[0].length, amtPos).trim();
-            desc = desc.replace(/\s+/g, ' ').trim();
-            if (!desc) desc = 'Transaction';
+    let match;
+    while ((match = transactionPattern.exec(pageText)) !== null) {
+      let description = match[1].trim();
+      const dateStr = match[2];
+      const amountStr = match[3];
 
-            // Check for category
-            let category: string | null = null;
-            for (const cat of knownCategories) {
-              if (desc.includes(cat)) {
-                category = cat;
-                desc = desc.replace(cat, '').trim();
-                break;
-              }
-            }
+      // Skip internal transfers between N26 spaces
+      if (
+        description.startsWith('De ') ||
+        description.startsWith('Vers ') ||
+        description.includes('Arrondis')
+      ) {
+        continue;
+      }
 
-            transactions.push({
-              date: `${year}-${month}-${day}`,
-              description: desc.substring(0, 100), // Limit description length
-              amount: Math.abs(amount),
-              type: amount > 0 ? 'income' : 'expense',
-              category,
-            });
-            break; // Move to next date
+      // Skip header/footer text
+      if (
+        description.includes('VICTOR MICHEL') ||
+        description.includes('IBAN') ||
+        description.includes('Relevé') ||
+        description.includes('Description') ||
+        description.includes('Émis le') ||
+        description.includes('Date de valeur') ||
+        description.length < 3
+      ) {
+        continue;
+      }
+
+      // Parse amount
+      const amount = parseAmount(amountStr);
+      if (amount === null || amount === 0) continue;
+
+      // Parse date (DD.MM.YYYY -> YYYY-MM-DD)
+      const [day, month, year] = dateStr.split('.');
+      const formattedDate = `${year}-${month}-${day}`;
+
+      // Extract category if present
+      let category: string | null = null;
+      for (const cat of knownCategories) {
+        if (pageText.includes(cat) && description.length < 50) {
+          // Check if category is near this transaction
+          const descIndex = pageText.indexOf(description);
+          const catIndex = pageText.indexOf(cat);
+          if (Math.abs(descIndex - catIndex) < 100) {
+            category = cat;
+            break;
           }
         }
+      }
+
+      // Clean up description
+      description = description
+        .replace(/Mastercard.*$/, '')
+        .replace(/Date de valeur.*$/, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+      // Skip if description is too short after cleaning
+      if (description.length < 2) continue;
+
+      transactions.push({
+        date: formattedDate,
+        description,
+        amount: Math.abs(amount),
+        type: amount > 0 ? 'income' : 'expense',
+        category,
+      });
+    }
+  }
+
+  // Alternative parsing: look for specific line patterns
+  if (transactions.length === 0) {
+    console.log('[BANK-PARSER] Pattern matching found no transactions, trying line-by-line');
+
+    for (const pageText of mainAccountPages) {
+      // Split into potential transaction blocks
+      const lines = pageText.split(/(?=\d{2}\.\d{2}\.\d{4})/);
+
+      for (const line of lines) {
+        // Look for date + amount pattern
+        const dateMatch = line.match(/(\d{2})\.(\d{2})\.(\d{4})/);
+        const amountMatch = line.match(/([+-])\s*(\d+[,.]?\d*)\s*€/);
+
+        if (!dateMatch || !amountMatch) continue;
+
+        const description = line
+          .substring(0, line.indexOf(dateMatch[0]))
+          .replace(/Mastercard.*$/i, '')
+          .replace(/\s+/g, ' ')
+          .trim();
+
+        // Skip internal transfers
+        if (
+          description.startsWith('De ') ||
+          description.startsWith('Vers ') ||
+          description.includes('Arrondis') ||
+          description.includes('VICTOR MICHEL') ||
+          description.length < 3
+        ) {
+          continue;
+        }
+
+        const sign = amountMatch[1];
+        const value = parseFloat(amountMatch[2].replace(',', '.'));
+        const amount = sign === '+' ? value : -value;
+
+        const formattedDate = `${dateMatch[3]}-${dateMatch[2]}-${dateMatch[1]}`;
+
+        transactions.push({
+          date: formattedDate,
+          description,
+          amount: Math.abs(amount),
+          type: amount > 0 ? 'income' : 'expense',
+          category: null,
+        });
       }
     }
   }
@@ -300,28 +312,19 @@ function parseN26Statement(
   let endDate: string | null = null;
   let monthName: string | null = null;
 
-  // Look for month name in text
-  const monthNames: Record<string, string> = {
-    'janvier': '01', 'février': '02', 'fevrier': '02', 'mars': '03',
-    'avril': '04', 'mai': '05', 'juin': '06', 'juillet': '07',
-    'août': '08', 'aout': '08', 'septembre': '09', 'octobre': '10',
-    'novembre': '11', 'décembre': '12', 'decembre': '12',
-  };
+  // Look for period in format "01.12.2025 jusqu'au 31.12.2025"
+  const periodMatch = fullText.match(/(\d{2})\.(\d{2})\.(\d{4})\s*jusqu['']au\s*(\d{2})\.(\d{2})\.(\d{4})/);
+  if (periodMatch) {
+    startDate = `${periodMatch[3]}-${periodMatch[2]}-${periodMatch[1]}`;
+    endDate = `${periodMatch[6]}-${periodMatch[5]}-${periodMatch[4]}`;
 
-  for (const [name, num] of Object.entries(monthNames)) {
-    const regex = new RegExp(name + '\\s*(\\d{4})', 'i');
-    const match = fullText.match(regex);
-    if (match) {
-      monthName = `${name.charAt(0).toUpperCase() + name.slice(1)} ${match[1]}`;
-      break;
-    }
-  }
-
-  // Get date range from transactions
-  if (uniqueTransactions.length > 0) {
-    const dates = uniqueTransactions.map((t) => t.date).sort();
-    startDate = dates[0];
-    endDate = dates[dates.length - 1];
+    // Get month name
+    const monthNames: Record<string, string> = {
+      '01': 'Janvier', '02': 'Février', '03': 'Mars', '04': 'Avril',
+      '05': 'Mai', '06': 'Juin', '07': 'Juillet', '08': 'Août',
+      '09': 'Septembre', '10': 'Octobre', '11': 'Novembre', '12': 'Décembre',
+    };
+    monthName = `${monthNames[periodMatch[2]] || periodMatch[2]} ${periodMatch[3]}`;
   }
 
   return {
@@ -351,8 +354,8 @@ function parseAmount(amountStr: string): number | null {
     let cleaned = amountStr.trim();
 
     // Check for sign
-    const isNegative = cleaned.includes('-');
-    const isPositive = cleaned.includes('+');
+    const isNegative = cleaned.startsWith('-');
+    const isPositive = cleaned.startsWith('+');
 
     // Remove signs and spaces
     cleaned = cleaned.replace(/[+-]/g, '').replace(/\s+/g, '');
@@ -372,7 +375,7 @@ function parseAmount(amountStr: string): number | null {
     if (isNegative) return -parsed;
     if (isPositive) return parsed;
 
-    // No explicit sign - assume negative for expenses
+    // No explicit sign - default to negative (expense)
     return -parsed;
   } catch {
     return null;
