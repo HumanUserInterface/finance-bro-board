@@ -44,6 +44,7 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
 
   // Budget allocation state
   const [budgetCategories, setBudgetCategories] = useState<BudgetCategory[]>([]);
+  const [deletedCategories, setDeletedCategories] = useState<{ id: string; isSavingsGoal: boolean }[]>([]);
 
   // Month and year selection - default to current month
   const currentDate = new Date();
@@ -66,6 +67,7 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
     if (isOpen) {
       loadCurrentIncome();
       loadBudgetAllocations();
+      setDeletedCategories([]); // Reset deleted items when dialog opens
     }
   }, [isOpen]);
 
@@ -216,6 +218,14 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
   };
 
   const removeBudgetCategory = (index: number) => {
+    const categoryToRemove = budgetCategories[index];
+    // Track deletion if it has an existing ID (needs to be deleted from database)
+    if (categoryToRemove?.existingId) {
+      setDeletedCategories((prev) => [
+        ...prev,
+        { id: categoryToRemove.existingId!, isSavingsGoal: categoryToRemove.isSavingsGoal || false }
+      ]);
+    }
     setBudgetCategories((prev) => prev.filter((_, i) => i !== index));
   };
 
@@ -451,6 +461,24 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
           if (error) console.error('Error creating expense:', error);
         }
       }
+
+      // Delete removed categories (soft delete by setting is_active to false)
+      for (const deleted of deletedCategories) {
+        if (deleted.isSavingsGoal) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          await (supabase.from('savings_goals') as any)
+            .update({ is_active: false })
+            .eq('id', deleted.id);
+        } else {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          await (supabase.from('expenses') as any)
+            .update({ is_active: false })
+            .eq('id', deleted.id);
+        }
+      }
+
+      // Clear deleted categories after saving
+      setDeletedCategories([]);
 
       // Update profile
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
