@@ -309,16 +309,16 @@ export default function BalancingPage() {
               </div>
               <div className="bg-green-50 dark:bg-green-950/30 rounded-lg p-4">
                 <p className="text-sm text-green-600">Income</p>
-                <p className="text-2xl font-semibold text-green-700">+{parsedStatement.summary.totalIncome.toFixed(2)}</p>
+                <p className="text-2xl font-semibold text-green-700">+{parsedStatement.summary.totalIncome.toFixed(2)}€</p>
               </div>
               <div className="bg-red-50 dark:bg-red-950/30 rounded-lg p-4">
                 <p className="text-sm text-red-600">Expenses</p>
-                <p className="text-2xl font-semibold text-red-700">-{parsedStatement.summary.totalExpenses.toFixed(2)}</p>
+                <p className="text-2xl font-semibold text-red-700">-{parsedStatement.summary.totalExpenses.toFixed(2)}€</p>
               </div>
               <div className={`rounded-lg p-4 ${parsedStatement.summary.netChange >= 0 ? 'bg-green-50 dark:bg-green-950/30' : 'bg-red-50 dark:bg-red-950/30'}`}>
                 <p className="text-sm text-slate-500">Net Change</p>
                 <p className={`text-2xl font-semibold ${parsedStatement.summary.netChange >= 0 ? 'text-green-700' : 'text-red-700'}`}>
-                  {parsedStatement.summary.netChange >= 0 ? '+' : ''}{parsedStatement.summary.netChange.toFixed(2)}
+                  {parsedStatement.summary.netChange >= 0 ? '+' : ''}{parsedStatement.summary.netChange.toFixed(2)}€
                 </p>
               </div>
             </div>
@@ -399,7 +399,7 @@ export default function BalancingPage() {
                     }`}
                   >
                     {tx.type === 'income' ? '+' : '-'}
-                    {tx.amount.toFixed(2)}
+                    {tx.amount.toFixed(2)}€
                   </span>
                 </div>
               ))}
