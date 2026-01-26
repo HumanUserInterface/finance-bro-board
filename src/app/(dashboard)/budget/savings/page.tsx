@@ -51,10 +51,14 @@ export default function SavingsPage() {
   // Track all withdrawals per account (accountName -> array of transactions)
   const [withdrawalsByAccount, setWithdrawalsByAccount] = useState<Record<string, { id: string; amount: number; date: string }[]>>({});
 
+  // Track if savings already confirmed this month
+  const [confirmedThisMonth, setConfirmedThisMonth] = useState(false);
+
   useEffect(() => {
     fetchAccounts();
     fetchSavingsGoals();
     fetchLastWithdrawals();
+    checkIfConfirmedThisMonth();
   }, []);
 
   async function fetchAccounts() {
@@ -109,6 +113,25 @@ export default function SavingsPage() {
     }
   }
 
+  async function checkIfConfirmedThisMonth() {
+    // Check if there's a "Monthly Savings Contribution" transaction this month
+    const now = new Date();
+    const firstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+    const lastOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
+
+    const { data, error } = await supabase
+      .from('transactions')
+      .select('id')
+      .eq('category', 'Monthly Savings Contribution')
+      .gte('date', firstOfMonth)
+      .lte('date', lastOfMonth)
+      .limit(1);
+
+    if (!error && data && data.length > 0) {
+      setConfirmedThisMonth(true);
+    }
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
 
@@ -148,6 +171,8 @@ export default function SavingsPage() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
+      const totalAmount = totalMonthlyContribution * monthsToConfirm;
+
       // For each savings goal with a monthly contribution
       for (const goal of savingsGoals) {
         if (!goal.monthly_contribution || goal.monthly_contribution <= 0) continue;
@@ -181,8 +206,20 @@ export default function SavingsPage() {
         }
       }
 
+      // Record a transaction to track this confirmation
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (supabase.from('transactions') as any).insert({
+        user_id: user.id,
+        description: `Monthly savings contribution (${monthsToConfirm} month${monthsToConfirm > 1 ? 's' : ''})`,
+        amount: totalAmount,
+        type: 'transfer',
+        category: 'Monthly Savings Contribution',
+        date: new Date().toISOString().split('T')[0],
+      });
+
       setConfirmDialogOpen(false);
       setMonthsToConfirm(1);
+      setConfirmedThisMonth(true);
       fetchAccounts();
     } catch (error) {
       console.error('Error confirming monthly savings:', error);
@@ -303,9 +340,13 @@ export default function SavingsPage() {
           {/* Confirm Monthly Savings Button */}
           <Dialog open={confirmDialogOpen} onOpenChange={setConfirmDialogOpen}>
             <DialogTrigger asChild>
-              <Button variant="outline" disabled={!hasGoalsWithContributions}>
+              <Button
+                variant={confirmedThisMonth ? "ghost" : "outline"}
+                disabled={!hasGoalsWithContributions}
+                className={confirmedThisMonth ? "text-green-600" : ""}
+              >
                 <CheckCircle2 className="mr-2 h-4 w-4" />
-                Confirm Monthly Savings
+                {confirmedThisMonth ? "Confirmed for this month" : "Confirm Monthly Savings"}
               </Button>
             </DialogTrigger>
             <DialogContent>
@@ -480,8 +521,8 @@ export default function SavingsPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Budget Info Card */}
-      {hasGoalsWithContributions && (
+      {/* Budget Info Card - only show if not confirmed this month */}
+      {hasGoalsWithContributions && !confirmedThisMonth && (
         <Card className="border-green-200 dark:border-green-800 bg-green-50/50 dark:bg-green-950/50">
           <CardContent className="py-4">
             <div className="flex items-center justify-between">
