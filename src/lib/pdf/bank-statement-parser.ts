@@ -1,4 +1,4 @@
-import PDFParser from 'pdf2json';
+import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 
 export interface ParsedTransaction {
   date: string;
@@ -31,87 +31,83 @@ export interface ParsedBankStatement {
  * Parses a bank statement PDF (N26 format) and extracts transactions
  */
 export async function parseBankStatement(buffer: Buffer): Promise<ParsedBankStatement> {
-  return new Promise((resolve, reject) => {
-    try {
-      console.log('[BANK-PARSER] Starting PDF parsing');
+  console.log('[BANK-PARSER] Starting PDF parsing with pdfjs-dist');
 
-      const pdfParser = new PDFParser();
+  // Convert Buffer to Uint8Array
+  const data = new Uint8Array(buffer);
 
-      pdfParser.on('pdfParser_dataReady', (pdfData) => {
-        try {
-          console.log('[BANK-PARSER] PDF parsed successfully');
+  // Load the PDF document
+  const loadingTask = pdfjs.getDocument({ data });
+  const doc = await loadingTask.promise;
 
-          // Extract text from all pages with page markers
-          const pageTexts: string[] = [];
+  console.log('[BANK-PARSER] PDF loaded, pages:', doc.numPages);
 
-          if (pdfData.Pages) {
-            console.log('[BANK-PARSER] Processing', pdfData.Pages.length, 'pages');
+  // Extract text from all pages
+  const pageTexts: string[] = [];
+  for (let i = 1; i <= doc.numPages; i++) {
+    const page = await doc.getPage(i);
+    const textContent = await page.getTextContent();
 
-            pdfData.Pages.forEach((page) => {
-              let pageText = '';
-              if (page.Texts) {
-                for (const text of page.Texts) {
-                  if (text.R) {
-                    for (const run of text.R) {
-                      if (run.T) {
-                        let decoded: string;
-                        try {
-                          decoded = decodeURIComponent(run.T);
-                        } catch {
-                          decoded = run.T;
-                        }
-                        pageText += decoded + ' ';
-                      }
-                    }
-                  }
-                }
-              }
-              pageTexts.push(pageText);
-            });
-          }
+    // Sort items by y position (top to bottom) then x position (left to right)
+    const items = textContent.items as Array<{ str: string; transform: number[] }>;
+    items.sort((a, b) => {
+      const yDiff = b.transform[5] - a.transform[5]; // Higher y = earlier (PDF y is bottom-up)
+      if (Math.abs(yDiff) > 5) return yDiff;
+      return a.transform[4] - b.transform[4]; // Lower x = earlier
+    });
 
-          const fullText = pageTexts.join('\n---PAGE---\n');
-          console.log('[BANK-PARSER] Extracted text length:', fullText.length);
+    // Group items by approximate y position into lines
+    const lines: string[][] = [];
+    let currentLine: string[] = [];
+    let lastY = items.length > 0 ? items[0].transform[5] : 0;
 
-          const result = parseN26Statement(fullText, pageTexts);
-          result.rawText = fullText;
-
-          console.log('[BANK-PARSER] Parsing complete:', {
-            transactionCount: result.transactions.length,
-            totalIncome: result.summary.totalIncome,
-            totalExpenses: result.summary.totalExpenses,
-            confidence: result.confidence,
-          });
-
-          resolve(result);
-        } catch (error) {
-          console.error('[BANK-PARSER] Error processing PDF data:', error);
-          reject(new Error('Failed to process PDF data'));
+    for (const item of items) {
+      const y = item.transform[5];
+      if (Math.abs(y - lastY) > 5) {
+        if (currentLine.length > 0) {
+          lines.push(currentLine);
         }
-      });
-
-      pdfParser.on('pdfParser_dataError', (error) => {
-        console.error('[BANK-PARSER] PDF parsing error:', error);
-        reject(new Error('Failed to parse PDF document'));
-      });
-
-      pdfParser.parseBuffer(buffer);
-    } catch (error) {
-      console.error('[BANK-PARSER] Error:', error);
-      reject(new Error('Failed to parse PDF document'));
+        currentLine = [];
+        lastY = y;
+      }
+      if (item.str.trim()) {
+        currentLine.push(item.str.trim());
+      }
     }
+    if (currentLine.length > 0) {
+      lines.push(currentLine);
+    }
+
+    // Join lines
+    const pageText = lines.map(line => line.join(' ')).join('\n');
+    pageTexts.push(pageText);
+  }
+
+  const fullText = pageTexts.join('\n---PAGE---\n');
+  console.log('[BANK-PARSER] Extracted text length:', fullText.length);
+
+  const result = parseN26Statement(fullText, pageTexts);
+  result.rawText = fullText;
+
+  console.log('[BANK-PARSER] Parsing complete:', {
+    transactionCount: result.transactions.length,
+    totalIncome: result.summary.totalIncome,
+    totalExpenses: result.summary.totalExpenses,
+    confidence: result.confidence,
   });
+
+  // Clean up
+  await doc.destroy();
+
+  return result;
 }
 
 /**
  * Parse N26 bank statement format - Custom parser for Victor's N26 statements
  */
-function parseN26Statement(
-  fullText: string,
-  pageTexts: string[]
-): ParsedBankStatement {
+function parseN26Statement(fullText: string, pageTexts: string[]): ParsedBankStatement {
   const transactions: ParsedTransaction[] = [];
-  let bankName: string | null = 'N26';
+  const bankName = 'N26';
   let confidence: 'high' | 'medium' | 'low' = 'medium';
 
   // N26 categories (French)
@@ -127,26 +123,15 @@ function parseN26Statement(
     'Revenus',
   ];
 
-  // Find ONLY main account pages (Relevé de compte), skip Espace pages
+  // Filter to only main account pages (not Espace pages)
   const mainAccountPages: string[] = [];
   for (const pageText of pageTexts) {
     // Skip "Relevé Espace" pages (sub-account statements)
-    if (pageText.includes('Relevé Espace') || pageText.includes('Relev%C3%A9 Espace')) {
-      continue;
-    }
+    if (pageText.includes('Relevé Espace')) continue;
     // Skip "Vue d'ensemble" and "Espaces vue d'ensemble" summary pages
-    if (
-      pageText.includes('Vue d\'ensemble') ||
-      pageText.includes('Vue d%E2%80%99ensemble') ||
-      pageText.includes('Espaces vue')
-    ) {
-      continue;
-    }
+    if (pageText.includes("Vue d'ensemble") || pageText.includes('Espaces vue')) continue;
     // Only include main account pages (Relevé de compte)
-    if (
-      pageText.includes('Relevé de compte') ||
-      pageText.includes('Relev%C3%A9 de compte')
-    ) {
+    if (pageText.includes('Relevé de compte')) {
       mainAccountPages.push(pageText);
     }
   }
@@ -155,111 +140,96 @@ function parseN26Statement(
 
   // Process each main account page
   for (const pageText of mainAccountPages) {
-    // Look for transaction patterns:
-    // Format: MERCHANT_NAME [category] DD.MM.YYYY [+/-]XX,XX€
-    // Or with "Date de valeur" in between
+    const lines = pageText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
 
-    // Strategy: Find all amounts with € and trace back to find description and date
-    const amountPattern = /([+-])(\d{1,3}(?:\.\d{3})*,\d{2})€/g;
-    let match;
+    // Find transactions by looking for amount patterns
+    // Amount format: [+/-]XX,XX€ or [+/-]X.XXX,XX€
+    const amountPattern = /([+-])(\d{1,3}(?:\.\d{3})*,\d{2})€/;
 
-    while ((match = amountPattern.exec(pageText)) !== null) {
-      const sign = match[1];
-      const amountStr = match[2];
-      const amountPos = match.index;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
 
-      // Parse amount (French format: 1.234,56 -> 1234.56)
+      // Check if this line contains an amount at the end
+      const amountMatch = line.match(new RegExp(amountPattern.source + '$'));
+      if (!amountMatch) continue;
+
+      const sign = amountMatch[1];
+      const amountStr = amountMatch[2];
       const amount = parseFloat(amountStr.replace(/\./g, '').replace(',', '.'));
       if (isNaN(amount) || amount === 0) continue;
 
-      // Look backwards for a date (DD.MM.YYYY format)
-      const textBefore = pageText.substring(Math.max(0, amountPos - 500), amountPos);
+      // The line format is typically: "DD.MM.YYYY [+/-]XX,XX€"
+      // The description is on preceding lines
+      const dateMatch = line.match(/(\d{2})\.(\d{2})\.(\d{4})/);
+      if (!dateMatch) continue;
 
-      // Find the most recent date before this amount
-      const dateMatches = [...textBefore.matchAll(/(\d{2})\.(\d{2})\.(\d{4})/g)];
-      if (dateMatches.length === 0) continue;
+      const transactionDate = `${dateMatch[3]}-${dateMatch[2]}-${dateMatch[1]}`;
 
-      const lastDateMatch = dateMatches[dateMatches.length - 1];
-      const formattedDate = `${lastDateMatch[3]}-${lastDateMatch[2]}-${lastDateMatch[1]}`;
-      const datePos = lastDateMatch.index!;
-
-      // Extract description: text before the date
-      let descriptionText = textBefore.substring(0, datePos).trim();
-
-      // Clean up the description - get the last meaningful segment
-      // Remove "Date de valeur DD.MM.YYYY" patterns
-      descriptionText = descriptionText.replace(/Date de valeur\s*\d{2}\.\d{2}\.\d{4}/gi, '');
-
-      // Split by multiple spaces or special patterns and get meaningful parts
-      const segments = descriptionText.split(/\s{2,}|\n/).filter(s => s.trim().length > 0);
-
-      // Get the last few meaningful segments
+      // Look backwards for description
       let description = '';
-      for (let i = segments.length - 1; i >= 0 && i >= segments.length - 3; i--) {
-        const seg = segments[i].trim();
-        // Skip if it's just a category or metadata
-        if (seg.length > 1 && !seg.match(/^\d+\s*\/\s*\d+$/)) {
-          description = seg + (description ? ' ' + description : '');
-        }
-      }
-
-      description = description.trim();
-
-      // Skip internal transfers between N26 spaces
-      if (
-        description.startsWith('De ') ||
-        description.startsWith('Vers ') ||
-        description.includes('Arrondis')
-      ) {
-        continue;
-      }
-
-      // Skip header/footer/metadata
-      if (
-        description.includes('VICTOR MICHEL') ||
-        description.includes('POULAIN') ||
-        description.includes('IBAN') ||
-        description.includes('BIC') ||
-        description.includes('Relevé') ||
-        description.includes('Description') ||
-        description.includes('Montant') ||
-        description.includes('Émis le') ||
-        description.includes('Emis le') ||
-        description.match(/^\d+\s*\/\s*\d+$/) || // Page numbers like "1 / 38"
-        description.length < 2
-      ) {
-        continue;
-      }
-
-      // Clean description further
-      description = description
-        .replace(/Mastercard\s*•?\s*/gi, '')
-        .replace(/Date de valeur.*$/i, '')
-        .replace(/\s+/g, ' ')
-        .trim();
-
-      // Skip if description is still garbage
-      if (description.length < 2 || description.match(/^\d+$/)) continue;
-
-      // Detect category from the text around the transaction
       let category: string | null = null;
-      for (const cat of knownCategories) {
-        if (textBefore.includes(cat)) {
-          category = cat;
-          // Remove category from description if present
-          description = description.replace(cat, '').trim();
-          break;
+
+      for (let j = i - 1; j >= Math.max(0, i - 10); j--) {
+        const prevLine = lines[j];
+
+        // Stop conditions
+        if (prevLine.match(/(\d{2})\.(\d{2})\.(\d{4})\s*([+-])(\d{1,3}(?:\.\d{3})*,\d{2})€$/)) break; // Previous transaction
+        if (prevLine.includes('Relevé de compte')) break;
+        if (prevLine.includes('Description Date')) break;
+        if (prevLine.includes('VICTOR MICHEL PASCAL POULAIN')) break;
+        if (prevLine.includes('Rue du Gros Gérard')) break;
+        if (prevLine.match(/^\d+\s*\/\s*\d+$/)) break; // Page number
+
+        // Skip metadata
+        if (prevLine.startsWith('Date de valeur')) continue;
+        if (prevLine.startsWith('IBAN:')) continue;
+        if (prevLine.match(/^[A-Z]{4}[A-Z]{2}[A-Z0-9]{2,}/)) continue; // BIC pattern
+        if (prevLine.includes('Émis le')) continue;
+        if (prevLine.match(/^N°\s*\d+\/\d+$/)) continue;
+
+        // Check for Mastercard + category line
+        if (prevLine.startsWith('Mastercard')) {
+          for (const cat of knownCategories) {
+            if (prevLine.includes(cat)) {
+              category = cat;
+              break;
+            }
+          }
+          continue;
         }
+
+        // Check for standalone category line
+        const matchedCategory = knownCategories.find(c => prevLine === c);
+        if (matchedCategory) {
+          category = matchedCategory;
+          continue;
+        }
+
+        // This should be the description
+        description = prevLine;
+        break;
       }
 
-      // Final cleanup
-      description = description.replace(/^•\s*/, '').trim();
+      // Skip if no valid description
+      if (!description) continue;
       if (description.length < 2) continue;
+
+      // Skip internal transfers (De/Vers)
+      if (description.startsWith('De ')) continue;
+      if (description.startsWith('Vers ')) continue;
+
+      // Skip round-ups
+      if (description.includes('Arrondis')) continue;
+
+      // Skip metadata garbage
+      if (description.includes('Montant original')) continue;
+      if (description.match(/^FR\d/)) continue; // IBAN
+      if (description === 'Description') continue;
 
       const finalAmount = sign === '+' ? amount : -amount;
 
       transactions.push({
-        date: formattedDate,
+        date: transactionDate,
         description,
         amount: Math.abs(finalAmount),
         type: finalAmount > 0 ? 'income' : 'expense',
@@ -303,13 +273,11 @@ function parseN26Statement(
   let endDate: string | null = null;
   let monthName: string | null = null;
 
-  // Look for period in format "01.12.2025 jusqu'au 31.12.2025"
   const periodMatch = fullText.match(/(\d{2})\.(\d{2})\.(\d{4})\s*jusqu['']au\s*(\d{2})\.(\d{2})\.(\d{4})/);
   if (periodMatch) {
     startDate = `${periodMatch[3]}-${periodMatch[2]}-${periodMatch[1]}`;
     endDate = `${periodMatch[6]}-${periodMatch[5]}-${periodMatch[4]}`;
 
-    // Get month name
     const monthNames: Record<string, string> = {
       '01': 'Janvier', '02': 'Février', '03': 'Mars', '04': 'Avril',
       '05': 'Mai', '06': 'Juin', '07': 'Juillet', '08': 'Août',
@@ -335,40 +303,4 @@ function parseN26Statement(
     confidence,
     rawText: '',
   };
-}
-
-/**
- * Parse French formatted amount
- */
-function parseAmount(amountStr: string): number | null {
-  try {
-    let cleaned = amountStr.trim();
-
-    // Check for sign
-    const isNegative = cleaned.startsWith('-');
-    const isPositive = cleaned.startsWith('+');
-
-    // Remove signs and spaces
-    cleaned = cleaned.replace(/[+-]/g, '').replace(/\s+/g, '');
-
-    // Handle French decimal format (comma as decimal separator)
-    if (cleaned.includes(',') && !cleaned.includes('.')) {
-      cleaned = cleaned.replace(',', '.');
-    } else if (cleaned.includes(',') && cleaned.includes('.')) {
-      // Format like 1.234,56 -> 1234.56
-      cleaned = cleaned.replace(/\./g, '').replace(',', '.');
-    }
-
-    const parsed = parseFloat(cleaned);
-    if (isNaN(parsed)) return null;
-
-    // Apply sign
-    if (isNegative) return -parsed;
-    if (isPositive) return parsed;
-
-    // No explicit sign - default to negative (expense)
-    return -parsed;
-  } catch {
-    return null;
-  }
 }
