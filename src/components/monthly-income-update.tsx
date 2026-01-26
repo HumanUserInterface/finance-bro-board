@@ -412,12 +412,24 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
       // Update budget allocations for each category
       for (const cat of budgetCategories) {
         if (cat.isSavingsGoal && cat.existingId) {
-          // Update savings goal
+          // Update existing savings goal
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           await (supabase
             .from('savings_goals') as any)
-            .update({ monthly_contribution: cat.amount })
+            .update({ monthly_contribution: cat.amount, name: cat.name })
             .eq('id', cat.existingId);
+        } else if (cat.isSavingsGoal && !cat.existingId && cat.name.trim()) {
+          // Create new savings goal from budget allocation
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          await (supabase.from('savings_goals') as any).insert({
+            user_id: user.id,
+            name: cat.name,
+            type: 'other',
+            target_amount: cat.amount * 12, // Default target: 1 year of contributions
+            current_amount: 0,
+            monthly_contribution: cat.amount,
+            priority: 10,
+          });
         } else if (!cat.isSavingsGoal && cat.existingId) {
           // Update expense budget_limit
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -425,6 +437,18 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
             .from('expenses') as any)
             .update({ budget_limit: cat.amount, amount: cat.amount })
             .eq('id', cat.existingId);
+        } else if (!cat.isSavingsGoal && !cat.existingId && cat.name.trim()) {
+          // Create new expense from budget allocation
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          await (supabase.from('expenses') as any).insert({
+            user_id: user.id,
+            name: cat.name,
+            amount: cat.amount,
+            budget_limit: cat.amount,
+            type: cat.categoryType,
+            is_recurring: true,
+            frequency: 'monthly',
+          });
         }
       }
 

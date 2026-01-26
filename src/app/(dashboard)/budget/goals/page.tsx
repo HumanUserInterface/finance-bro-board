@@ -9,7 +9,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Progress } from '@/components/ui/progress';
-import { Plus, Pencil, Trash2, Target, Sparkles, PiggyBank, ArrowUpCircle } from 'lucide-react';
+import { Plus, Pencil, Trash2, Target, Sparkles, PiggyBank, ArrowUpCircle, ArrowDownCircle } from 'lucide-react';
 import type { Tables } from '@/types/database';
 
 type SavingsGoal = Tables<'savings_goals'>;
@@ -28,8 +28,10 @@ export default function GoalsPage() {
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [contributionDialogOpen, setContributionDialogOpen] = useState(false);
+  const [withdrawalDialogOpen, setWithdrawalDialogOpen] = useState(false);
   const [editingGoal, setEditingGoal] = useState<SavingsGoal | null>(null);
   const [selectedGoalForContribution, setSelectedGoalForContribution] = useState<SavingsGoal | null>(null);
+  const [selectedGoalForWithdrawal, setSelectedGoalForWithdrawal] = useState<SavingsGoal | null>(null);
   const supabase = createClient();
 
   // Form state
@@ -40,6 +42,7 @@ export default function GoalsPage() {
   const [monthlyContribution, setMonthlyContribution] = useState('');
   const [targetDate, setTargetDate] = useState('');
   const [contributionAmount, setContributionAmount] = useState('');
+  const [withdrawalAmount, setWithdrawalAmount] = useState('');
 
   useEffect(() => {
     fetchGoals();
@@ -108,6 +111,24 @@ export default function GoalsPage() {
     fetchGoals();
   }
 
+  async function handleWithdrawal(e: React.FormEvent) {
+    e.preventDefault();
+    if (!selectedGoalForWithdrawal) return;
+
+    const withdrawAmount = parseFloat(withdrawalAmount);
+    const newAmount = Math.max(0, selectedGoalForWithdrawal.current_amount - withdrawAmount);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (supabase.from('savings_goals') as any)
+      .update({ current_amount: newAmount })
+      .eq('id', selectedGoalForWithdrawal.id);
+
+    setWithdrawalAmount('');
+    setWithdrawalDialogOpen(false);
+    setSelectedGoalForWithdrawal(null);
+    fetchGoals();
+  }
+
   async function handleDelete(id: string) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (supabase.from('savings_goals') as any)
@@ -130,6 +151,11 @@ export default function GoalsPage() {
   function openContributionDialog(goal: SavingsGoal) {
     setSelectedGoalForContribution(goal);
     setContributionDialogOpen(true);
+  }
+
+  function openWithdrawalDialog(goal: SavingsGoal) {
+    setSelectedGoalForWithdrawal(goal);
+    setWithdrawalDialogOpen(true);
   }
 
   function resetForm() {
@@ -301,6 +327,42 @@ export default function GoalsPage() {
         </DialogContent>
       </Dialog>
 
+      {/* Withdrawal Dialog */}
+      <Dialog open={withdrawalDialogOpen} onOpenChange={setWithdrawalDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Withdraw Funds</DialogTitle>
+            <DialogDescription>
+              Withdraw from &quot;{selectedGoalForWithdrawal?.name}&quot;
+              {selectedGoalForWithdrawal && (
+                <span className="block mt-1">
+                  Available: ${selectedGoalForWithdrawal.current_amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                </span>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleWithdrawal} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="withdrawal">Amount ($)</Label>
+              <Input
+                id="withdrawal"
+                type="number"
+                step="0.01"
+                min="0"
+                max={selectedGoalForWithdrawal?.current_amount || 0}
+                placeholder="100"
+                value={withdrawalAmount}
+                onChange={(e) => setWithdrawalAmount(e.target.value)}
+                required
+              />
+            </div>
+            <Button type="submit" variant="destructive" className="w-full">
+              Withdraw
+            </Button>
+          </form>
+        </DialogContent>
+      </Dialog>
+
       {/* Summary Cards */}
       <div className="grid gap-4 md:grid-cols-3">
         <Card className="border-black/10">
@@ -381,8 +443,11 @@ export default function GoalsPage() {
                       </div>
                     </div>
                     <div className="flex gap-1">
-                      <Button variant="ghost" size="icon" onClick={() => openContributionDialog(goal)}>
-                        <ArrowUpCircle className="h-4 w-4" />
+                      <Button variant="ghost" size="icon" onClick={() => openContributionDialog(goal)} title="Add funds">
+                        <ArrowUpCircle className="h-4 w-4 text-green-600" />
+                      </Button>
+                      <Button variant="ghost" size="icon" onClick={() => openWithdrawalDialog(goal)} title="Withdraw funds" disabled={goal.current_amount <= 0}>
+                        <ArrowDownCircle className="h-4 w-4 text-orange-600" />
                       </Button>
                       <Button variant="ghost" size="icon" onClick={() => openEditDialog(goal)}>
                         <Pencil className="h-4 w-4" />
