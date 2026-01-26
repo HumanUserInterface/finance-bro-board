@@ -48,9 +48,13 @@ export default function SavingsPage() {
   // Withdraw state
   const [withdrawAmount, setWithdrawAmount] = useState('');
 
+  // Track last withdrawal per account (accountId -> { amount, date })
+  const [lastWithdrawals, setLastWithdrawals] = useState<Record<string, { amount: number; date: string }>>({});
+
   useEffect(() => {
     fetchAccounts();
     fetchSavingsGoals();
+    fetchLastWithdrawals();
   }, []);
 
   async function fetchAccounts() {
@@ -75,6 +79,31 @@ export default function SavingsPage() {
 
     if (!error && data) {
       setSavingsGoals(data);
+    }
+  }
+
+  async function fetchLastWithdrawals() {
+    // Fetch recent withdrawal transactions (category starts with 'Savings Withdrawal:')
+    const { data, error } = await supabase
+      .from('transactions')
+      .select('*')
+      .like('category', 'Savings Withdrawal:%')
+      .order('date', { ascending: false });
+
+    if (!error && data) {
+      // Group by account name and get the most recent for each
+      const withdrawalsByAccount: Record<string, { amount: number; date: string }> = {};
+      data.forEach((tx: any) => {
+        // Extract account name from category "Savings Withdrawal: AccountName"
+        const accountName = tx.category.replace('Savings Withdrawal: ', '');
+        if (!withdrawalsByAccount[accountName]) {
+          withdrawalsByAccount[accountName] = {
+            amount: tx.amount,
+            date: tx.date,
+          };
+        }
+      });
+      setLastWithdrawals(withdrawalsByAccount);
     }
   }
 
@@ -164,18 +193,34 @@ export default function SavingsPage() {
     e.preventDefault();
     if (!selectedAccountForWithdraw) return;
 
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
     const amount = parseFloat(withdrawAmount);
     const newBalance = Math.max(0, selectedAccountForWithdraw.balance - amount);
 
+    // Update account balance
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (supabase.from('savings_accounts') as any)
       .update({ balance: newBalance, updated_at: new Date().toISOString() })
       .eq('id', selectedAccountForWithdraw.id);
 
+    // Create a transaction record for the withdrawal
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (supabase.from('transactions') as any).insert({
+      user_id: user.id,
+      description: `Withdrawal from ${selectedAccountForWithdraw.name}`,
+      amount: amount,
+      type: 'expense',
+      category: `Savings Withdrawal: ${selectedAccountForWithdraw.name}`,
+      date: new Date().toISOString().split('T')[0],
+    });
+
     setWithdrawAmount('');
     setWithdrawDialogOpen(false);
     setSelectedAccountForWithdraw(null);
     fetchAccounts();
+    fetchLastWithdrawals();
   }
 
   async function handleDelete(id: string) {
@@ -468,48 +513,60 @@ export default function SavingsPage() {
         </Card>
       ) : (
         <div className="grid gap-4">
-          {accounts.map((account) => (
-            <Card key={account.id}>
-              <CardContent className="flex items-center justify-between py-4">
-                <div className="flex items-center gap-4">
-                  <div className="h-10 w-10 rounded-full bg-black/5 flex items-center justify-center">
-                    {getAccountIcon(account.type)}
+          {accounts.map((account) => {
+            const lastWithdrawal = lastWithdrawals[account.name];
+            return (
+              <Card key={account.id}>
+                <CardContent className="py-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      <div className="h-10 w-10 rounded-full bg-black/5 flex items-center justify-center">
+                        {getAccountIcon(account.type)}
+                      </div>
+                      <div>
+                        <p className="font-medium">{account.name}</p>
+                        <p className="text-sm text-muted-foreground">
+                          {accountTypes.find((t) => t.value === account.type)?.label}
+                          {account.institution && ` • ${account.institution}`}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      <div className="text-right">
+                        <p className="font-semibold">
+                          €{account.balance.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                        </p>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => openWithdrawDialog(account)}
+                          disabled={account.balance <= 0}
+                          title="Withdraw"
+                        >
+                          <ArrowDownCircle className="h-4 w-4 text-orange-600" />
+                        </Button>
+                        <Button variant="ghost" size="icon" onClick={() => openEditDialog(account)}>
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" onClick={() => handleDelete(account.id)}>
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <p className="font-medium">{account.name}</p>
-                    <p className="text-sm text-muted-foreground">
-                      {accountTypes.find((t) => t.value === account.type)?.label}
-                      {account.institution && ` • ${account.institution}`}
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-4">
-                  <div className="text-right">
-                    <p className="font-semibold">
-                      €{account.balance.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                    </p>
-                  </div>
-                  <div className="flex gap-2">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => openWithdrawDialog(account)}
-                      disabled={account.balance <= 0}
-                      title="Withdraw"
-                    >
-                      <ArrowDownCircle className="h-4 w-4 text-orange-600" />
-                    </Button>
-                    <Button variant="ghost" size="icon" onClick={() => openEditDialog(account)}>
-                      <Pencil className="h-4 w-4" />
-                    </Button>
-                    <Button variant="ghost" size="icon" onClick={() => handleDelete(account.id)}>
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+                  {lastWithdrawal && (
+                    <div className="mt-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                      <p className="text-sm text-orange-600 dark:text-orange-400">
+                        Last withdrawal: €{lastWithdrawal.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })} on {new Date(lastWithdrawal.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                      </p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            );
+          })}
         </div>
       )}
     </div>
