@@ -10,6 +10,11 @@ interface PaycheckStepProps {
   onBack: () => void;
 }
 
+const MONTHS = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December'
+];
+
 export function PaycheckStep({ salary, onSalaryChange, onNext, onBack }: PaycheckStepProps) {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -19,6 +24,18 @@ export function PaycheckStep({ salary, onSalaryChange, onNext, onBack }: Paychec
   );
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Default to current month and year
+  const currentDate = new Date();
+  const [selectedMonth, setSelectedMonth] = useState(currentDate.getMonth() + 1);
+  const [selectedYear, setSelectedYear] = useState(currentDate.getFullYear());
+
+  // Generate year options (current year and 2 years back)
+  const yearOptions = [
+    currentDate.getFullYear(),
+    currentDate.getFullYear() - 1,
+    currentDate.getFullYear() - 2,
+  ];
+
   const handleFileSelect = async (file: File) => {
     setIsUploading(true);
     setUploadError(null);
@@ -26,6 +43,8 @@ export function PaycheckStep({ salary, onSalaryChange, onNext, onBack }: Paychec
     try {
       const formData = new FormData();
       formData.append('file', file);
+      formData.append('month', selectedMonth.toString());
+      formData.append('year', selectedYear.toString());
 
       const response = await fetch('/api/upload-paycheck', {
         method: 'POST',
@@ -104,6 +123,43 @@ export function PaycheckStep({ salary, onSalaryChange, onNext, onBack }: Paychec
         <p className="text-slate-600 dark:text-slate-400">
           Upload your French paycheck PDF and we'll automatically extract your net salary
         </p>
+      </div>
+
+      {/* Month and Year Selection */}
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+            Month
+          </label>
+          <select
+            value={selectedMonth}
+            onChange={(e) => setSelectedMonth(parseInt(e.target.value))}
+            className="w-full px-4 py-3 border border-slate-300 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-black dark:focus:ring-white focus:border-transparent"
+          >
+            {MONTHS.map((month, index) => (
+              <option key={month} value={index + 1}>
+                {month}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="space-y-2">
+          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+            Year
+          </label>
+          <select
+            value={selectedYear}
+            onChange={(e) => setSelectedYear(parseInt(e.target.value))}
+            className="w-full px-4 py-3 border border-slate-300 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-black dark:focus:ring-white focus:border-transparent"
+          >
+            {yearOptions.map((year) => (
+              <option key={year} value={year}>
+                {year}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {/* Upload Area */}

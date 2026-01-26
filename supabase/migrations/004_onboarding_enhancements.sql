@@ -14,11 +14,12 @@ ALTER TABLE public.profiles
   ADD COLUMN monthly_income_last_updated TIMESTAMPTZ;
 
 -- Create uploaded_documents table for storing PDF metadata and parsed data
+-- Note: file_path is nullable since we extract data and don't store the actual PDF
 CREATE TABLE public.uploaded_documents (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE NOT NULL,
   file_name TEXT NOT NULL,
-  file_path TEXT NOT NULL,
+  file_path TEXT,
   file_size INTEGER NOT NULL,
   mime_type TEXT NOT NULL,
   document_type TEXT NOT NULL CHECK (document_type IN ('paycheck', 'benefit_statement', 'other')),

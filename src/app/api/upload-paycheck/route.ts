@@ -36,13 +36,20 @@ export async function POST(request: NextRequest) {
     console.log('[UPLOAD] Parsing form data');
     const formData = await request.formData();
     const file = formData.get('file') as File | null;
+    const month = formData.get('month') as string | null;
+    const year = formData.get('year') as string | null;
 
     if (!file) {
       console.error('[UPLOAD] No file in form data');
       return NextResponse.json({ error: 'No file provided' }, { status: 400 });
     }
 
-    console.log('[UPLOAD] File received:', { name: file.name, size: file.size, type: file.type });
+    if (!month || !year) {
+      console.error('[UPLOAD] Missing month or year');
+      return NextResponse.json({ error: 'Month and year are required' }, { status: 400 });
+    }
+
+    console.log('[UPLOAD] File received:', { name: file.name, size: file.size, type: file.type, month, year });
 
     // Validate file type
     if (!ALLOWED_MIME_TYPES.includes(file.type)) {
@@ -109,50 +116,24 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Generate unique file path
-    const timestamp = Date.now();
-    const sanitizedFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
-    const filePath = `${user.id}/${timestamp}-${sanitizedFileName}`;
-    console.log('[UPLOAD] Generated file path:', filePath);
-
-    // Upload to Supabase Storage
-    console.log('[UPLOAD] Uploading to Supabase Storage');
-    const { error: uploadError } = await supabase.storage
-      .from('paychecks')
-      .upload(filePath, buffer, {
-        contentType: file.type,
-        upsert: false,
-      });
-
-    if (uploadError) {
-      console.error('[UPLOAD] Storage upload error:', uploadError);
-      return NextResponse.json(
-        {
-          error: 'Failed to upload file to storage. The storage bucket may not exist.',
-          details: uploadError.message,
-        },
-        { status: 500 }
-      );
-    }
-
-    console.log('[UPLOAD] File uploaded successfully');
-
-    // Insert record into uploaded_documents
-    console.log('[UPLOAD] Inserting document record');
+    // Insert record into uploaded_documents (without storing the actual PDF file)
+    console.log('[UPLOAD] Saving document metadata (PDF not stored for privacy)');
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: document, error: dbError } = await (supabase
       .from('uploaded_documents') as any)
       .insert({
         user_id: user.id,
         file_name: file.name,
-        file_path: filePath,
+        file_path: null, // Not storing the actual file
         file_size: file.size,
         mime_type: file.type,
         document_type: 'paycheck',
         parsed_data: {
           netSalary: parsedData.netSalary,
           grossSalary: parsedData.grossSalary,
-          month: parsedData.month,
+          month: parseInt(month),
+          year: parseInt(year),
+          parsedMonth: parsedData.month, // Keep the parsed month from PDF for reference
           employer: parsedData.employer,
           confidence: parsedData.confidence,
         },
@@ -162,15 +143,13 @@ export async function POST(request: NextRequest) {
 
     if (dbError) {
       console.error('[UPLOAD] Database insert error:', dbError);
-      // Try to clean up uploaded file
-      await supabase.storage.from('paychecks').remove([filePath]);
       return NextResponse.json({
         error: 'Failed to save document record. The table may not exist.',
         details: dbError.message,
       }, { status: 500 });
     }
 
-    console.log('[UPLOAD] Document record created:', document.id);
+    console.log('[UPLOAD] Document metadata saved:', document.id);
 
     // Return success with parsed data
     const response = {
@@ -179,11 +158,15 @@ export async function POST(request: NextRequest) {
         id: document.id,
         fileName: document.file_name,
         uploadDate: document.upload_date,
+        month: parseInt(month),
+        year: parseInt(year),
       },
       parsedData: {
         netSalary: parsedData.netSalary,
         grossSalary: parsedData.grossSalary,
-        month: parsedData.month,
+        month: parseInt(month),
+        year: parseInt(year),
+        parsedMonth: parsedData.month,
         employer: parsedData.employer,
         confidence: parsedData.confidence,
       },

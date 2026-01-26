@@ -25,6 +25,7 @@ const DEFAULT_CATEGORIES: Omit<BudgetCategory, 'amount' | 'percentage'>[] = [
   { name: 'Utilities', type: 'need', categoryType: 'fixed' },
   { name: 'Internet', type: 'need', categoryType: 'fixed' },
   { name: 'Insurance', type: 'need', categoryType: 'fixed' },
+  { name: 'Debt', type: 'need', categoryType: 'fixed' },
   // Wants (30%)
   { name: 'Groceries', type: 'want', categoryType: 'variable' },
   { name: 'Transport', type: 'want', categoryType: 'variable' },
@@ -36,7 +37,7 @@ const DEFAULT_CATEGORIES: Omit<BudgetCategory, 'amount' | 'percentage'>[] = [
 ];
 
 const DEFAULT_PERCENTAGES = {
-  need: { total: 50, items: [35, 5, 3, 7] }, // Rent, Utilities, Internet, Insurance
+  need: { total: 50, items: [30, 5, 3, 7, 5] }, // Rent, Utilities, Internet, Insurance, Debt
   want: { total: 30, items: [15, 5, 5, 5] }, // Groceries, Transport, Entertainment, Shopping
   saving: { total: 20, items: [15, 5] }, // Emergency Fund, Projects
 };
@@ -46,31 +47,86 @@ export function BudgetStep({ totalIncome, onComplete, onBack }: BudgetStepProps)
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Initialize categories with default 50/30/20 split
+  // Initialize categories - load existing expenses or use defaults
   useEffect(() => {
-    const initialCategories: BudgetCategory[] = [];
-    let needIndex = 0;
-    let wantIndex = 0;
-    let savingIndex = 0;
+    async function loadExpensesAndInitialize() {
+      const supabase = createClient();
+      const { data: { user } } = await supabase.auth.getUser();
 
-    DEFAULT_CATEGORIES.forEach((cat) => {
-      let percentage = 0;
-      if (cat.type === 'need') {
-        percentage = DEFAULT_PERCENTAGES.need.items[needIndex++];
-      } else if (cat.type === 'want') {
-        percentage = DEFAULT_PERCENTAGES.want.items[wantIndex++];
-      } else if (cat.type === 'saving') {
-        percentage = DEFAULT_PERCENTAGES.saving.items[savingIndex++];
+      if (!user) return;
+
+      // Check for existing expenses and savings goals
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: existingExpenses } = await (supabase
+        .from('expenses')
+        .select('*')
+        .eq('user_id', user.id) as any);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: existingSavings } = await (supabase
+        .from('savings_goals')
+        .select('*')
+        .eq('user_id', user.id) as any);
+
+      const initialCategories: BudgetCategory[] = [];
+
+      // If user has existing expenses, use those
+      if (existingExpenses && existingExpenses.length > 0) {
+        // Convert existing expenses to budget categories
+        existingExpenses.forEach((expense: any) => {
+          initialCategories.push({
+            name: expense.name,
+            amount: expense.budget_limit || expense.amount || 0,
+            percentage: totalIncome > 0 ? ((expense.budget_limit || expense.amount || 0) / totalIncome) * 100 : 0,
+            type: expense.type === 'fixed' ? 'need' : 'want',
+            categoryType: expense.type,
+            isSavingsGoal: false,
+          });
+        });
       }
 
-      initialCategories.push({
-        ...cat,
-        percentage,
-        amount: (totalIncome * percentage) / 100,
-      });
-    });
+      // If user has existing savings goals, use those
+      if (existingSavings && existingSavings.length > 0) {
+        existingSavings.forEach((saving: any) => {
+          initialCategories.push({
+            name: saving.name,
+            amount: saving.monthly_contribution || 0,
+            percentage: totalIncome > 0 ? ((saving.monthly_contribution || 0) / totalIncome) * 100 : 0,
+            type: 'saving',
+            categoryType: 'variable',
+            isSavingsGoal: true,
+          });
+        });
+      }
 
-    setCategories(initialCategories);
+      // If no existing data, use defaults
+      if (initialCategories.length === 0) {
+        let needIndex = 0;
+        let wantIndex = 0;
+        let savingIndex = 0;
+
+        DEFAULT_CATEGORIES.forEach((cat) => {
+          let percentage = 0;
+          if (cat.type === 'need') {
+            percentage = DEFAULT_PERCENTAGES.need.items[needIndex++];
+          } else if (cat.type === 'want') {
+            percentage = DEFAULT_PERCENTAGES.want.items[wantIndex++];
+          } else if (cat.type === 'saving') {
+            percentage = DEFAULT_PERCENTAGES.saving.items[savingIndex++];
+          }
+
+          initialCategories.push({
+            ...cat,
+            percentage,
+            amount: (totalIncome * percentage) / 100,
+          });
+        });
+      }
+
+      setCategories(initialCategories);
+    }
+
+    loadExpensesAndInitialize();
   }, [totalIncome]);
 
   const updateCategory = (index: number, updates: Partial<BudgetCategory>) => {
@@ -142,65 +198,102 @@ export function BudgetStep({ totalIncome, onComplete, onBack }: BudgetStepProps)
         throw new Error('Not authenticated');
       }
 
-      // Check for existing expenses to avoid duplicates
+      // Get existing expenses and savings to update budget limits
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data: existingExpenses } = await (supabase
         .from('expenses')
         .select('*')
         .eq('user_id', user.id) as any);
 
-      const hasExistingData = existingExpenses && existingExpenses.length > 0;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: existingSavings } = await (supabase
+        .from('savings_goals')
+        .select('*')
+        .eq('user_id', user.id) as any);
 
-      // Only create expenses if user has no existing data
-      if (!hasExistingData) {
-        // Create expense categories
-        const expenseCategories = categories.filter((cat) => !cat.isSavingsGoal);
-        const categoryInserts = expenseCategories.map((cat) => ({
-          user_id: user.id,
-          name: cat.name,
-          type: (cat.type === 'need' ? 'fixed' : cat.type === 'want' ? 'variable' : 'bill') as 'fixed' | 'variable' | 'bill',
-          budget_limit: cat.amount,
-        }));
+      // Update existing expenses with new budget limits
+      const expenseCategories = categories.filter((cat) => !cat.isSavingsGoal);
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: createdCategories, error: categoryError } = await (supabase.from('expense_categories') as any)
-          .insert(categoryInserts)
-          .select();
+      for (const cat of expenseCategories) {
+        // Find if this expense already exists
+        const existing = existingExpenses?.find((e: any) =>
+          e.name.toLowerCase() === cat.name.toLowerCase()
+        );
 
-        if (categoryError) throw categoryError;
+        if (existing) {
+          // Update budget_limit for existing expense
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { error: updateError } = await (supabase
+            .from('expenses') as any)
+            .update({ budget_limit: cat.amount })
+            .eq('id', existing.id);
 
-        // Create expenses with budget limits
-        const expenseInserts = expenseCategories.map((cat, index) => ({
-          user_id: user.id,
-          category_id: createdCategories?.[index]?.id || null,
-          name: cat.name,
-          amount: cat.amount,
-          type: cat.categoryType as 'fixed' | 'variable',
-          is_recurring: true,
-          frequency: 'monthly' as const,
-        }));
+          if (updateError) throw updateError;
+        } else {
+          // Create new expense if it doesn't exist
+          // First create expense category
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { data: createdCategory, error: categoryError } = await (supabase.from('expense_categories') as any)
+            .insert({
+              user_id: user.id,
+              name: cat.name,
+              type: (cat.type === 'need' ? 'fixed' : cat.type === 'want' ? 'variable' : 'bill') as 'fixed' | 'variable' | 'bill',
+              budget_limit: cat.amount,
+            })
+            .select()
+            .single();
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { error: expenseError } = await (supabase.from('expenses') as any).insert(expenseInserts);
+          if (categoryError) throw categoryError;
 
-        if (expenseError) throw expenseError;
+          // Then create expense
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { error: expenseError } = await (supabase.from('expenses') as any).insert({
+            user_id: user.id,
+            category_id: createdCategory.id,
+            name: cat.name,
+            amount: cat.amount,
+            type: cat.categoryType as 'fixed' | 'variable',
+            is_recurring: true,
+            frequency: 'monthly' as const,
+            budget_limit: cat.amount,
+          });
+
+          if (expenseError) throw expenseError;
+        }
       }
 
-      // Create savings goals
+      // Update or create savings goals
       const savingsCategories = categories.filter((cat) => cat.isSavingsGoal);
-      const savingsInserts = savingsCategories.map((cat) => ({
-        user_id: user.id,
-        name: cat.name,
-        type: (cat.name.toLowerCase().includes('emergency') ? 'emergency_fund' : 'other') as 'emergency_fund' | 'vacation' | 'big_purchase' | 'retirement' | 'debt_payoff' | 'other',
-        target_amount: cat.amount * 12, // Set target as 1 year of contributions
-        current_amount: 0,
-        monthly_contribution: cat.amount,
-      }));
 
-      if (savingsInserts.length > 0) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { error: savingsError } = await (supabase.from('savings_goals') as any).insert(savingsInserts);
-        if (savingsError) throw savingsError;
+      for (const cat of savingsCategories) {
+        // Find if this savings goal already exists
+        const existing = existingSavings?.find((s: any) =>
+          s.name.toLowerCase() === cat.name.toLowerCase()
+        );
+
+        if (existing) {
+          // Update monthly_contribution for existing savings goal
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { error: updateError } = await (supabase
+            .from('savings_goals') as any)
+            .update({ monthly_contribution: cat.amount })
+            .eq('id', existing.id);
+
+          if (updateError) throw updateError;
+        } else {
+          // Create new savings goal if it doesn't exist
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { error: savingsError } = await (supabase.from('savings_goals') as any).insert({
+            user_id: user.id,
+            name: cat.name,
+            type: (cat.name.toLowerCase().includes('emergency') ? 'emergency_fund' : 'other') as 'emergency_fund' | 'vacation' | 'big_purchase' | 'retirement' | 'debt_payoff' | 'other',
+            target_amount: cat.amount * 12, // Set target as 1 year of contributions
+            current_amount: 0,
+            monthly_contribution: cat.amount,
+          });
+
+          if (savingsError) throw savingsError;
+        }
       }
 
       // Update profile to mark onboarding as completed

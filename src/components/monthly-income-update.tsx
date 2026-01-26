@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import { Home, Target, PiggyBank } from 'lucide-react';
 
 interface MonthlyIncomeUpdateProps {
   isOpen: boolean;
@@ -15,8 +16,18 @@ interface CurrentIncome {
   primeActivite: number;
 }
 
+interface BudgetCategory {
+  name: string;
+  amount: number;
+  percentage: number;
+  type: 'need' | 'want' | 'saving';
+  categoryType: 'fixed' | 'variable';
+  isSavingsGoal?: boolean;
+  existingId?: string; // Track existing expense/savings goal ID
+}
+
 export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncomeUpdateProps) {
-  const [activeTab, setActiveTab] = useState<'paycheck' | 'benefits'>('paycheck');
+  const [activeTab, setActiveTab] = useState<'paycheck' | 'benefits' | 'budget'>('paycheck');
   const [currentIncome, setCurrentIncome] = useState<CurrentIncome>({
     salary: null,
     apl: 0,
@@ -31,12 +42,39 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Budget allocation state
+  const [budgetCategories, setBudgetCategories] = useState<BudgetCategory[]>([]);
+
+  // Month and year selection - default to current month
+  const currentDate = new Date();
+  const [selectedMonth, setSelectedMonth] = useState(currentDate.getMonth() + 1);
+  const [selectedYear, setSelectedYear] = useState(currentDate.getFullYear());
+
+  const MONTHS = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'
+  ];
+
+  const yearOptions = [
+    currentDate.getFullYear(),
+    currentDate.getFullYear() - 1,
+    currentDate.getFullYear() - 2,
+  ];
+
   // Load current income when dialog opens
   useEffect(() => {
     if (isOpen) {
       loadCurrentIncome();
+      loadBudgetAllocations();
     }
   }, [isOpen]);
+
+  // Reload budget when tab changes to budget or income changes
+  useEffect(() => {
+    if (activeTab === 'budget' && isOpen) {
+      loadBudgetAllocations();
+    }
+  }, [activeTab, newSalary, newApl, newPrimeActivite]);
 
   const loadCurrentIncome = async () => {
     try {
@@ -76,6 +114,127 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
     }
   };
 
+  const loadBudgetAllocations = async () => {
+    try {
+      const supabase = createClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) return;
+
+      const totalIncome = (newSalary || currentIncome.salary || 0) + newApl + newPrimeActivite;
+
+      if (totalIncome === 0) return;
+
+      // Load existing expenses
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: existingExpenses } = await (supabase
+        .from('expenses')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('is_active', true) as any);
+
+      // Load existing savings goals
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: existingSavings } = await (supabase
+        .from('savings_goals')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('is_active', true) as any);
+
+      const initialCategories: BudgetCategory[] = [];
+
+      // Convert existing expenses to budget categories
+      if (existingExpenses && existingExpenses.length > 0) {
+        existingExpenses.forEach((expense: any) => {
+          initialCategories.push({
+            name: expense.name,
+            amount: expense.budget_limit || expense.amount || 0,
+            percentage: totalIncome > 0 ? ((expense.budget_limit || expense.amount || 0) / totalIncome) * 100 : 0,
+            type: expense.type === 'fixed' ? 'need' : 'want',
+            categoryType: expense.type,
+            isSavingsGoal: false,
+            existingId: expense.id,
+          });
+        });
+      }
+
+      // Add existing savings goals
+      if (existingSavings && existingSavings.length > 0) {
+        existingSavings.forEach((saving: any) => {
+          initialCategories.push({
+            name: saving.name,
+            amount: saving.monthly_contribution || 0,
+            percentage: totalIncome > 0 ? ((saving.monthly_contribution || 0) / totalIncome) * 100 : 0,
+            type: 'saving',
+            categoryType: 'variable',
+            isSavingsGoal: true,
+            existingId: saving.id,
+          });
+        });
+      }
+
+      setBudgetCategories(initialCategories);
+    } catch (error) {
+      console.error('Error loading budget allocations:', error);
+    }
+  };
+
+  const updateBudgetCategory = (index: number, updates: Partial<BudgetCategory>) => {
+    setBudgetCategories((prev) =>
+      prev.map((cat, i) => {
+        if (i === index) {
+          const updated = { ...cat, ...updates };
+          const totalIncome = (newSalary || currentIncome.salary || 0) + newApl + newPrimeActivite;
+
+          // If amount changed, update percentage
+          if (updates.amount !== undefined) {
+            updated.percentage = totalIncome > 0 ? (updates.amount / totalIncome) * 100 : 0;
+          }
+          // If percentage changed, update amount
+          if (updates.percentage !== undefined) {
+            updated.amount = (totalIncome * updates.percentage) / 100;
+          }
+          return updated;
+        }
+        return cat;
+      })
+    );
+  };
+
+  const addBudgetCategory = (type: 'need' | 'want' | 'saving') => {
+    const newCategory: BudgetCategory = {
+      name: '',
+      amount: 0,
+      percentage: 0,
+      type,
+      categoryType: type === 'need' ? 'fixed' : 'variable',
+      isSavingsGoal: type === 'saving',
+    };
+    setBudgetCategories((prev) => [...prev, newCategory]);
+  };
+
+  const removeBudgetCategory = (index: number) => {
+    setBudgetCategories((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const calculateBudgetTotals = () => {
+    const byType = {
+      need: 0,
+      want: 0,
+      saving: 0,
+    };
+
+    budgetCategories.forEach((cat) => {
+      byType[cat.type] += cat.percentage;
+    });
+
+    const total = byType.need + byType.want + byType.saving;
+
+    return { byType, total };
+  };
+
   const handleFileSelect = async (file: File) => {
     setIsUploading(true);
     setUploadError(null);
@@ -83,6 +242,8 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
     try {
       const formData = new FormData();
       formData.append('file', file);
+      formData.append('month', selectedMonth.toString());
+      formData.append('year', selectedYear.toString());
 
       const response = await fetch('/api/upload-paycheck', {
         method: 'POST',
@@ -248,6 +409,25 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
         }
       }
 
+      // Update budget allocations for each category
+      for (const cat of budgetCategories) {
+        if (cat.isSavingsGoal && cat.existingId) {
+          // Update savings goal
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          await (supabase
+            .from('savings_goals') as any)
+            .update({ monthly_contribution: cat.amount })
+            .eq('id', cat.existingId);
+        } else if (!cat.isSavingsGoal && cat.existingId) {
+          // Update expense budget_limit
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          await (supabase
+            .from('expenses') as any)
+            .update({ budget_limit: cat.amount, amount: cat.amount })
+            .eq('id', cat.existingId);
+        }
+      }
+
       // Update profile
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       await (supabase
@@ -294,7 +474,7 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
             onClick={() => setActiveTab('paycheck')}
             className={`flex-1 px-6 py-3 font-medium transition-colors ${
               activeTab === 'paycheck'
-                ? 'border-b-2 border-blue-600 text-blue-600 dark:text-blue-400'
+                ? 'border-b-2 border-black dark:border-white text-black dark:text-white'
                 : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
             }`}
           >
@@ -304,18 +484,374 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
             onClick={() => setActiveTab('benefits')}
             className={`flex-1 px-6 py-3 font-medium transition-colors ${
               activeTab === 'benefits'
-                ? 'border-b-2 border-blue-600 text-blue-600 dark:text-blue-400'
+                ? 'border-b-2 border-black dark:border-white text-black dark:text-white'
                 : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
             }`}
           >
             Benefits
           </button>
+          <button
+            onClick={() => setActiveTab('budget')}
+            className={`flex-1 px-6 py-3 font-medium transition-colors ${
+              activeTab === 'budget'
+                ? 'border-b-2 border-black dark:border-white text-black dark:text-white'
+                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
+            }`}
+          >
+            Budget
+          </button>
         </div>
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-6">
-          {activeTab === 'paycheck' ? (
+          {activeTab === 'budget' ? (
             <div className="space-y-6">
+              <div className="bg-slate-100 dark:bg-slate-800 rounded-lg p-4">
+                <p className="text-sm text-slate-600 dark:text-slate-400">New Total Monthly Income</p>
+                <p className="text-3xl font-bold text-slate-900 dark:text-slate-100">
+                  €{((newSalary || currentIncome.salary || 0) + newApl + newPrimeActivite).toFixed(2)}
+                </p>
+              </div>
+
+              {/* Remaining to Allocate */}
+              {(() => {
+                const totalIncome = (newSalary || currentIncome.salary || 0) + newApl + newPrimeActivite;
+                const totalAllocated = budgetCategories.reduce((sum, cat) => sum + cat.amount, 0);
+                const remaining = totalIncome - totalAllocated;
+                const remainingPercentage = totalIncome > 0 ? (remaining / totalIncome) * 100 : 0;
+
+                return (
+                  <div className={`rounded-lg p-4 border-2 ${
+                    remaining < 0
+                      ? 'bg-red-50 dark:bg-red-950 border-red-300 dark:border-red-800'
+                      : remaining > totalIncome * 0.2
+                        ? 'bg-orange-50 dark:bg-orange-950 border-orange-300 dark:border-orange-800'
+                        : 'bg-green-50 dark:bg-green-950 border-green-300 dark:border-green-800'
+                  }`}>
+                    <p className="text-sm text-slate-600 dark:text-slate-400">Remaining to be allocated</p>
+                    <div className="flex items-end gap-3">
+                      <p className={`text-2xl font-bold ${
+                        remaining < 0
+                          ? 'text-red-700 dark:text-red-300'
+                          : remaining > totalIncome * 0.2
+                            ? 'text-orange-700 dark:text-orange-300'
+                            : 'text-green-700 dark:text-green-300'
+                      }`}>
+                        €{remaining.toFixed(2)}
+                      </p>
+                      <p className={`text-lg font-semibold mb-0.5 ${
+                        remaining < 0
+                          ? 'text-red-600 dark:text-red-400'
+                          : remaining > totalIncome * 0.2
+                            ? 'text-orange-600 dark:text-orange-400'
+                            : 'text-green-600 dark:text-green-400'
+                      }`}>
+                        {remainingPercentage.toFixed(1)}%
+                      </p>
+                    </div>
+                    {remaining < 0 && (
+                      <p className="text-sm text-red-700 dark:text-red-300 mt-2">
+                        You're over budget by €{Math.abs(remaining).toFixed(2)}. Please reduce some allocations.
+                      </p>
+                    )}
+                    {remaining > totalIncome * 0.2 && remaining >= 0 && (
+                      <p className="text-sm text-orange-700 dark:text-orange-300 mt-2">
+                        You have a large amount unallocated. Consider adding to expenses or savings.
+                      </p>
+                    )}
+                  </div>
+                );
+              })()}
+
+              {/* Budget Sections */}
+              <>
+                {/* Needs Section */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Home className="h-5 w-5 text-black dark:text-white" />
+                      <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
+                        Needs (Essential Expenses)
+                      </h3>
+                      <span className="text-sm font-medium text-slate-900 dark:text-slate-100">
+                        €{budgetCategories
+                          .filter((cat) => cat.type === 'need')
+                          .reduce((sum, cat) => sum + cat.amount, 0)
+                          .toFixed(2)}
+                      </span>
+                      <span className="text-sm font-medium text-slate-600 dark:text-slate-400">
+                        {budgetCategories
+                          .filter((cat) => cat.type === 'need')
+                          .reduce((sum, cat) => sum + cat.percentage, 0)
+                          .toFixed(1)}
+                        %
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => addBudgetCategory('need')}
+                      className="text-sm text-slate-700 dark:text-slate-300 hover:text-black dark:hover:text-white font-medium"
+                    >
+                      + Add
+                    </button>
+                  </div>
+                  <div className="space-y-2">
+                    {budgetCategories.filter((cat) => cat.type === 'need').length === 0 ? (
+                      <p className="text-sm text-slate-500 dark:text-slate-400 italic px-3 py-2">
+                        No essential expenses yet. Click "+ Add" to add rent, utilities, insurance, etc.
+                      </p>
+                    ) : (
+                      budgetCategories.map((cat, index) => {
+                        if (cat.type !== 'need') return null;
+                        return (
+                          <div key={index} className="flex items-center gap-3">
+                            <input
+                              type="text"
+                              value={cat.name}
+                              onChange={(e) => updateBudgetCategory(index, { name: e.target.value })}
+                              placeholder="Category name"
+                              className="flex-1 px-3 py-2 border border-slate-300 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 text-sm"
+                            />
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm text-slate-600 dark:text-slate-400">€</span>
+                              <input
+                                type="number"
+                                value={cat.amount.toFixed(0)}
+                                onChange={(e) =>
+                                  updateBudgetCategory(index, { amount: parseFloat(e.target.value) || 0 })
+                                }
+                                className="w-24 px-3 py-2 border border-slate-300 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 text-sm"
+                              />
+                              <span className="text-sm text-slate-600 dark:text-slate-400 w-12">
+                                {cat.percentage.toFixed(1)}%
+                              </span>
+                            </div>
+                            <button
+                              onClick={() => removeBudgetCategory(index)}
+                              className="text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 text-sm"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+
+                {/* Wants Section */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Target className="h-5 w-5 text-black dark:text-white" />
+                      <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
+                        Wants (Lifestyle Expenses)
+                      </h3>
+                      <span className="text-sm font-medium text-slate-900 dark:text-slate-100">
+                        €{budgetCategories
+                          .filter((cat) => cat.type === 'want')
+                          .reduce((sum, cat) => sum + cat.amount, 0)
+                          .toFixed(2)}
+                      </span>
+                      <span className="text-sm font-medium text-slate-600 dark:text-slate-400">
+                        {budgetCategories
+                          .filter((cat) => cat.type === 'want')
+                          .reduce((sum, cat) => sum + cat.percentage, 0)
+                          .toFixed(1)}
+                        %
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => addBudgetCategory('want')}
+                      className="text-sm text-slate-700 dark:text-slate-300 hover:text-black dark:hover:text-white font-medium"
+                    >
+                      + Add
+                    </button>
+                  </div>
+                  <div className="space-y-2">
+                    {budgetCategories.filter((cat) => cat.type === 'want').length === 0 ? (
+                      <p className="text-sm text-slate-500 dark:text-slate-400 italic px-3 py-2">
+                        No lifestyle expenses yet. Click "+ Add" to add groceries, shopping, entertainment, etc.
+                      </p>
+                    ) : (
+                      budgetCategories.map((cat, index) => {
+                        if (cat.type !== 'want') return null;
+                        return (
+                          <div key={index} className="flex items-center gap-3">
+                            <input
+                              type="text"
+                              value={cat.name}
+                              onChange={(e) => updateBudgetCategory(index, { name: e.target.value })}
+                              placeholder="Category name"
+                              className="flex-1 px-3 py-2 border border-slate-300 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 text-sm"
+                            />
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm text-slate-600 dark:text-slate-400">€</span>
+                              <input
+                                type="number"
+                                value={cat.amount.toFixed(0)}
+                                onChange={(e) =>
+                                  updateBudgetCategory(index, { amount: parseFloat(e.target.value) || 0 })
+                                }
+                                className="w-24 px-3 py-2 border border-slate-300 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 text-sm"
+                              />
+                              <span className="text-sm text-slate-600 dark:text-slate-400 w-12">
+                                {cat.percentage.toFixed(1)}%
+                              </span>
+                            </div>
+                            <button
+                              onClick={() => removeBudgetCategory(index)}
+                              className="text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 text-sm"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+
+                {/* Savings Section */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <PiggyBank className="h-5 w-5 text-black dark:text-white" />
+                      <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
+                        Savings (Future Goals)
+                      </h3>
+                      <span className="text-sm font-medium text-slate-900 dark:text-slate-100">
+                        €{budgetCategories
+                          .filter((cat) => cat.type === 'saving')
+                          .reduce((sum, cat) => sum + cat.amount, 0)
+                          .toFixed(2)}
+                      </span>
+                      <span className="text-sm font-medium text-slate-600 dark:text-slate-400">
+                        {budgetCategories
+                          .filter((cat) => cat.type === 'saving')
+                          .reduce((sum, cat) => sum + cat.percentage, 0)
+                          .toFixed(1)}
+                        %
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => addBudgetCategory('saving')}
+                      className="text-sm text-slate-700 dark:text-slate-300 hover:text-black dark:hover:text-white font-medium"
+                    >
+                      + Add
+                    </button>
+                  </div>
+                  <div className="space-y-2">
+                    {budgetCategories.filter((cat) => cat.type === 'saving').length === 0 ? (
+                      <p className="text-sm text-slate-500 dark:text-slate-400 italic px-3 py-2">
+                        No savings goals yet. Click "+ Add" to add emergency fund, projects, etc.
+                      </p>
+                    ) : (
+                      budgetCategories.map((cat, index) => {
+                        if (cat.type !== 'saving') return null;
+                        return (
+                          <div key={index} className="flex items-center gap-3">
+                            <input
+                              type="text"
+                              value={cat.name}
+                              onChange={(e) => updateBudgetCategory(index, { name: e.target.value })}
+                              placeholder="Category name"
+                              className="flex-1 px-3 py-2 border border-slate-300 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 text-sm"
+                            />
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm text-slate-600 dark:text-slate-400">€</span>
+                              <input
+                                type="number"
+                                value={cat.amount.toFixed(0)}
+                                onChange={(e) =>
+                                  updateBudgetCategory(index, { amount: parseFloat(e.target.value) || 0 })
+                                }
+                                className="w-24 px-3 py-2 border border-slate-300 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 text-sm"
+                              />
+                              <span className="text-sm text-slate-600 dark:text-slate-400 w-12">
+                                {cat.percentage.toFixed(1)}%
+                              </span>
+                            </div>
+                            <button
+                              onClick={() => removeBudgetCategory(index)}
+                              className="text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 text-sm"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+
+                {/* Summary */}
+                <div className="bg-slate-100 dark:bg-slate-800 rounded-lg p-4 space-y-2">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-slate-600 dark:text-slate-400">Total Allocated</span>
+                    <span
+                      className={`font-semibold ${
+                        calculateBudgetTotals().total > 100
+                          ? 'text-red-600 dark:text-red-400'
+                          : calculateBudgetTotals().total < 80
+                            ? 'text-orange-600 dark:text-orange-400'
+                            : 'text-green-600 dark:text-green-400'
+                      }`}
+                    >
+                      {calculateBudgetTotals().total.toFixed(1)}%
+                    </span>
+                  </div>
+                  {calculateBudgetTotals().total > 100 && (
+                    <p className="text-sm text-red-600 dark:text-red-400">
+                      You're over budget by {(calculateBudgetTotals().total - 100).toFixed(1)}%.
+                    </p>
+                  )}
+                  {calculateBudgetTotals().total < 80 && (
+                    <p className="text-sm text-orange-600 dark:text-orange-400">
+                      You have {(100 - calculateBudgetTotals().total).toFixed(1)}% unallocated.
+                    </p>
+                  )}
+                </div>
+              </>
+            </div>
+          ) : activeTab === 'paycheck' ? (
+            <div className="space-y-6">
+              {/* Month and Year Selection */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+                    Month
+                  </label>
+                  <select
+                    value={selectedMonth}
+                    onChange={(e) => setSelectedMonth(parseInt(e.target.value))}
+                    className="w-full px-4 py-3 border border-slate-300 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-black dark:focus:ring-white focus:border-transparent"
+                  >
+                    {MONTHS.map((month, index) => (
+                      <option key={month} value={index + 1}>
+                        {month}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+                    Year
+                  </label>
+                  <select
+                    value={selectedYear}
+                    onChange={(e) => setSelectedYear(parseInt(e.target.value))}
+                    className="w-full px-4 py-3 border border-slate-300 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-black dark:focus:ring-white focus:border-transparent"
+                  >
+                    {yearOptions.map((year) => (
+                      <option key={year} value={year}>
+                        {year}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
               <div
                 onClick={() => fileInputRef.current?.click()}
                 onDrop={handleDrop}
@@ -323,8 +859,8 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
                 onDragLeave={handleDragLeave}
                 className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors ${
                   isDragging
-                    ? 'border-blue-500 bg-blue-50 dark:bg-blue-950'
-                    : 'border-slate-300 dark:border-slate-700 hover:border-blue-400'
+                    ? 'border-black dark:border-white bg-slate-50 dark:bg-slate-900'
+                    : 'border-slate-300 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-600'
                 }`}
               >
                 <input
@@ -337,7 +873,7 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
 
                 {isUploading ? (
                   <div className="space-y-3">
-                    <div className="w-12 h-12 mx-auto border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                    <div className="w-12 h-12 mx-auto border-4 border-black dark:border-white border-t-transparent rounded-full animate-spin" />
                     <p className="text-slate-600 dark:text-slate-400">Analyzing paycheck...</p>
                   </div>
                 ) : (
@@ -367,10 +903,10 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
               )}
 
               {newSalary !== null && (
-                <div className="bg-blue-50 dark:bg-blue-950 rounded-lg p-4 space-y-2">
-                  <p className="text-sm text-blue-600 dark:text-blue-400">New salary</p>
+                <div className="bg-slate-100 dark:bg-slate-800 border-2 border-black dark:border-white rounded-lg p-4 space-y-2">
+                  <p className="text-sm text-slate-600 dark:text-slate-400">New salary</p>
                   <div className="flex items-end gap-3">
-                    <p className="text-2xl font-bold text-blue-900 dark:text-blue-100">
+                    <p className="text-2xl font-bold text-slate-900 dark:text-slate-100">
                       €{newSalary.toFixed(2)}
                     </p>
                     {salaryDifference !== null && (
@@ -403,7 +939,7 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
                     className="w-full px-4 py-3 border border-slate-300 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100"
                   />
                   {newApl !== currentIncome.apl && (
-                    <p className="text-sm text-blue-600 dark:text-blue-400">
+                    <p className="text-sm text-slate-700 dark:text-slate-300">
                       Changed from €{currentIncome.apl.toFixed(2)}
                     </p>
                   )}
@@ -421,7 +957,7 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
                     className="w-full px-4 py-3 border border-slate-300 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100"
                   />
                   {newPrimeActivite !== currentIncome.primeActivite && (
-                    <p className="text-sm text-blue-600 dark:text-blue-400">
+                    <p className="text-sm text-slate-700 dark:text-slate-300">
                       Changed from €{currentIncome.primeActivite.toFixed(2)}
                     </p>
                   )}
@@ -432,7 +968,7 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-slate-200 dark:border-slate-700 flex justify-end gap-3">
+        <div className="px-6 py-4 border-t border-slate-200 dark:border-slate-700 flex justify-between gap-3">
           <button
             onClick={onClose}
             disabled={isSaving}
@@ -440,13 +976,31 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
           >
             Cancel
           </button>
-          <button
-            onClick={handleSave}
-            disabled={isSaving}
-            className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition-colors disabled:bg-slate-300 disabled:cursor-not-allowed"
-          >
-            {isSaving ? 'Saving...' : 'Save Changes'}
-          </button>
+          <div className="flex gap-3">
+            {activeTab === 'paycheck' && (newSalary !== null || newApl !== currentIncome.apl || newPrimeActivite !== currentIncome.primeActivite) && (
+              <button
+                onClick={() => setActiveTab('benefits')}
+                className="px-6 py-2 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-900 dark:text-slate-100 font-semibold rounded-lg transition-colors"
+              >
+                Next
+              </button>
+            )}
+            {activeTab === 'benefits' && (
+              <button
+                onClick={() => setActiveTab('budget')}
+                className="px-6 py-2 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-900 dark:text-slate-100 font-semibold rounded-lg transition-colors"
+              >
+                Review Budget
+              </button>
+            )}
+            <button
+              onClick={handleSave}
+              disabled={isSaving || (activeTab === 'budget' && calculateBudgetTotals().total > 100)}
+              className="px-6 py-2 bg-black dark:bg-white text-white dark:text-black hover:bg-slate-800 dark:hover:bg-slate-200 font-semibold rounded-lg transition-colors disabled:bg-slate-300 disabled:cursor-not-allowed dark:disabled:bg-slate-700"
+            >
+              {isSaving ? 'Saving...' : 'Save Changes'}
+            </button>
+          </div>
         </div>
       </div>
     </div>
