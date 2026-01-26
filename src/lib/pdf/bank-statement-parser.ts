@@ -1,4 +1,12 @@
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
+import path from 'path';
+
+// Set worker path for server-side
+const workerPath = path.join(
+  process.cwd(),
+  'node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs'
+);
+pdfjs.GlobalWorkerOptions.workerSrc = workerPath;
 
 export interface ParsedTransaction {
   date: string;
@@ -7,6 +15,17 @@ export interface ParsedTransaction {
   type: 'income' | 'expense';
   category: string | null;
   rawLine?: string;
+  isInternalTransfer: boolean;
+  internalAccount: string | null; // The N26 "Espace" involved
+  transferDirection: 'from' | 'to' | null; // Direction of internal transfer
+}
+
+export interface InternalAccountSummary {
+  name: string;
+  totalIn: number;  // Money received from this account
+  totalOut: number; // Money sent to this account
+  netFlow: number;  // totalIn - totalOut
+  transactionCount: number;
 }
 
 export interface ParsedBankStatement {
@@ -21,7 +40,12 @@ export interface ParsedBankStatement {
     totalExpenses: number;
     netChange: number;
     transactionCount: number;
+    // Breakdown by type
+    externalIncome: number;
+    externalExpenses: number;
+    internalTransfers: number;
   };
+  internalAccounts: InternalAccountSummary[];
   bankName: string | null;
   confidence: 'high' | 'medium' | 'low';
   rawText: string;
@@ -36,51 +60,56 @@ export async function parseBankStatement(buffer: Buffer): Promise<ParsedBankStat
   // Convert Buffer to Uint8Array
   const data = new Uint8Array(buffer);
 
-  // Load the PDF document
-  const loadingTask = pdfjs.getDocument({ data });
+  // Load PDF with worker disabled
+  const loadingTask = pdfjs.getDocument({
+    data,
+    useWorkerFetch: false,
+    isEvalSupported: false,
+    useSystemFonts: true,
+  });
   const doc = await loadingTask.promise;
 
   console.log('[BANK-PARSER] PDF loaded, pages:', doc.numPages);
 
-  // Extract text from all pages
+  // Extract text from each page
   const pageTexts: string[] = [];
   for (let i = 1; i <= doc.numPages; i++) {
     const page = await doc.getPage(i);
     const textContent = await page.getTextContent();
 
-    // Sort items by y position (top to bottom) then x position (left to right)
+    // Get text items and sort by position
     const items = textContent.items as Array<{ str: string; transform: number[] }>;
+
+    // Sort by y (top to bottom) then x (left to right)
     items.sort((a, b) => {
-      const yDiff = b.transform[5] - a.transform[5]; // Higher y = earlier (PDF y is bottom-up)
+      const yDiff = b.transform[5] - a.transform[5];
       if (Math.abs(yDiff) > 5) return yDiff;
-      return a.transform[4] - b.transform[4]; // Lower x = earlier
+      return a.transform[4] - b.transform[4];
     });
 
-    // Group items by approximate y position into lines
-    const lines: string[][] = [];
+    // Group into lines and join text
+    let currentY = items.length > 0 ? items[0].transform[5] : 0;
     let currentLine: string[] = [];
-    let lastY = items.length > 0 ? items[0].transform[5] : 0;
+    const lines: string[] = [];
 
     for (const item of items) {
       const y = item.transform[5];
-      if (Math.abs(y - lastY) > 5) {
+      if (Math.abs(y - currentY) > 5) {
         if (currentLine.length > 0) {
-          lines.push(currentLine);
+          lines.push(currentLine.join(' '));
         }
         currentLine = [];
-        lastY = y;
+        currentY = y;
       }
       if (item.str.trim()) {
         currentLine.push(item.str.trim());
       }
     }
     if (currentLine.length > 0) {
-      lines.push(currentLine);
+      lines.push(currentLine.join(' '));
     }
 
-    // Join lines with column separator
-    const pageText = lines.map(line => line.join(' | ')).join('\n');
-    pageTexts.push(pageText);
+    pageTexts.push(lines.join('\n'));
   }
 
   const fullText = pageTexts.join('\n---PAGE---\n');
@@ -143,9 +172,9 @@ function parseN26Statement(fullText: string, pageTexts: string[]): ParsedBankSta
   for (const pageText of transactionPages) {
     const lines = pageText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
 
-    // Transaction line pattern: "DESCRIPTION | DD.MM.YYYY | [+/-]XX,XX€"
-    // The line format from pdfjs is: columns joined by " | "
-    const transactionPattern = /^(.+?)\s*\|\s*(\d{2})\.(\d{2})\.(\d{4})\s*\|\s*([+-])?(\d{1,3}(?:\.\d{3})*,\d{2})\s*€$/;
+    // pdfjs-dist format: "DESCRIPTION DD.MM.YYYY [+/-]XX,XX€"
+    // e.g., "CAGNARD 01.12.2025 -9,00€" or "De Plaisirs 01.12.2025 +40,00€"
+    const transactionPattern = /^(.+?)\s+(\d{2})\.(\d{2})\.(\d{4})\s+([+-])?(\d{1,3}(?:\.\d{3})*,\d{2})€$/;
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
@@ -165,17 +194,14 @@ function parseN26Statement(fullText: string, pageTexts: string[]): ParsedBankSta
 
       const transactionDate = `${year}-${month}-${day}`;
 
-      // Skip round-ups
-      if (description.includes('Arrondis')) continue;
-
-      // Skip headers
-      if (description === 'Description') continue;
-
-      // Skip garbage
+      // Skip headers and metadata
+      if (description === 'Description Date de réservation') continue;
+      if (description.includes('VICTOR MICHEL PASCAL')) continue;
+      if (description.match(/^\d+\s*\/\s*\d+$/)) continue; // Page number
+      if (description.match(/^IBAN:/)) continue;
       if (description.length < 2) continue;
-      if (description.match(/^FR\d/)) continue; // IBAN
 
-      // Look at the next line for category (if it starts with "Mastercard")
+      // Look at the next line for category
       let category: string | null = null;
       if (i + 1 < lines.length) {
         const nextLine = lines[i + 1];
@@ -187,17 +213,30 @@ function parseN26Statement(fullText: string, pageTexts: string[]): ParsedBankSta
             }
           }
         } else {
-          // Check if next line is a standalone category
-          for (const cat of knownCategories) {
-            if (nextLine === cat) {
-              category = cat;
-              break;
-            }
+          // Check for standalone category
+          const matchedCategory = knownCategories.find(c => nextLine === c);
+          if (matchedCategory) {
+            category = matchedCategory;
           }
         }
       }
 
       const finalAmount = sign === '+' ? amount : -amount;
+
+      // Detect internal transfers (De/Vers)
+      let isInternalTransfer = false;
+      let internalAccount: string | null = null;
+      let transferDirection: 'from' | 'to' | null = null;
+
+      if (description.startsWith('De ')) {
+        isInternalTransfer = true;
+        internalAccount = description.substring(3); // Remove "De "
+        transferDirection = 'from';
+      } else if (description.startsWith('Vers ')) {
+        isInternalTransfer = true;
+        internalAccount = description.substring(5); // Remove "Vers "
+        transferDirection = 'to';
+      }
 
       transactions.push({
         date: transactionDate,
@@ -206,6 +245,9 @@ function parseN26Statement(fullText: string, pageTexts: string[]): ParsedBankSta
         type: finalAmount > 0 ? 'income' : 'expense',
         category,
         rawLine: line,
+        isInternalTransfer,
+        internalAccount,
+        transferDirection,
       });
     }
   }
@@ -223,13 +265,58 @@ function parseN26Statement(fullText: string, pageTexts: string[]): ParsedBankSta
   // Calculate summary
   let totalIncome = 0;
   let totalExpenses = 0;
+  let externalIncome = 0;
+  let externalExpenses = 0;
+  let internalTransfers = 0;
+
+  // Track internal accounts
+  const accountMap = new Map<string, InternalAccountSummary>();
+
   for (const tx of uniqueTransactions) {
     if (tx.type === 'income') {
       totalIncome += tx.amount;
+      if (tx.isInternalTransfer) {
+        internalTransfers += tx.amount;
+      } else {
+        externalIncome += tx.amount;
+      }
     } else {
       totalExpenses += tx.amount;
+      if (tx.isInternalTransfer) {
+        internalTransfers += tx.amount;
+      } else {
+        externalExpenses += tx.amount;
+      }
+    }
+
+    // Track internal account flows
+    if (tx.isInternalTransfer && tx.internalAccount) {
+      const accountName = tx.internalAccount;
+      if (!accountMap.has(accountName)) {
+        accountMap.set(accountName, {
+          name: accountName,
+          totalIn: 0,
+          totalOut: 0,
+          netFlow: 0,
+          transactionCount: 0,
+        });
+      }
+      const account = accountMap.get(accountName)!;
+      account.transactionCount++;
+      if (tx.transferDirection === 'from') {
+        // "De X" means money came FROM that account (we received it)
+        account.totalOut += tx.amount; // It left that account
+      } else {
+        // "Vers X" means money went TO that account (we sent it)
+        account.totalIn += tx.amount; // It entered that account
+      }
+      account.netFlow = account.totalIn - account.totalOut;
     }
   }
+
+  // Convert account map to sorted array
+  const internalAccounts = Array.from(accountMap.values())
+    .sort((a, b) => b.transactionCount - a.transactionCount);
 
   // Update confidence based on results
   if (uniqueTransactions.length > 10) {
@@ -270,7 +357,11 @@ function parseN26Statement(fullText: string, pageTexts: string[]): ParsedBankSta
       totalExpenses,
       netChange: totalIncome - totalExpenses,
       transactionCount: uniqueTransactions.length,
+      externalIncome,
+      externalExpenses,
+      internalTransfers,
     },
+    internalAccounts,
     bankName,
     confidence,
     rawText: '',

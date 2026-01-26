@@ -63,12 +63,20 @@ export async function POST(request: NextRequest) {
         transactionCount: parsedData.transactions.length,
         confidence: parsedData.confidence,
       });
-    } catch (error) {
-      console.error('[BANK-STATEMENT] PDF parsing error:', error);
+    } catch (error: unknown) {
+      const err = error as Error;
+      console.error('[BANK-STATEMENT] PDF parsing error:', err.message);
+      console.error('[BANK-STATEMENT] Error name:', err.name);
+      console.error('[BANK-STATEMENT] Error stack:', err.stack);
+
+      // Write error to file for debugging
+      const fs = await import('fs');
+      fs.writeFileSync('/tmp/parse-error.txt', `${err.name}: ${err.message}\n\n${err.stack}`);
+
       return NextResponse.json(
         {
           error: 'Failed to parse PDF. Please ensure this is a valid bank statement.',
-          details: error instanceof Error ? error.message : 'Unknown error',
+          details: err.message || 'Unknown error',
         },
         { status: 400 }
       );
