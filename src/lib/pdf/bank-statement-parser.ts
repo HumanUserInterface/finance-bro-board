@@ -78,8 +78,8 @@ export async function parseBankStatement(buffer: Buffer): Promise<ParsedBankStat
       lines.push(currentLine);
     }
 
-    // Join lines
-    const pageText = lines.map(line => line.join(' ')).join('\n');
+    // Join lines with column separator
+    const pageText = lines.map(line => line.join(' | ')).join('\n');
     pageTexts.push(pageText);
   }
 
@@ -123,108 +123,79 @@ function parseN26Statement(fullText: string, pageTexts: string[]): ParsedBankSta
     'Revenus',
   ];
 
-  // Filter to only main account pages (not Espace pages)
-  const mainAccountPages: string[] = [];
+  // Only use main account pages (Relevé de compte), not Espace sub-accounts
+  // This matches the "Vue d'ensemble" summary which shows main account totals
+  const transactionPages: string[] = [];
   for (const pageText of pageTexts) {
-    // Skip "Relevé Espace" pages (sub-account statements)
-    if (pageText.includes('Relevé Espace')) continue;
-    // Skip "Vue d'ensemble" and "Espaces vue d'ensemble" summary pages
+    // Skip all summary pages
     if (pageText.includes("Vue d'ensemble") || pageText.includes('Espaces vue')) continue;
-    // Only include main account pages (Relevé de compte)
+    // Skip Espace pages (sub-accounts) - their transactions are already reflected in main account
+    if (pageText.includes('Relevé Espace')) continue;
+    // Include main account pages (Relevé de compte)
     if (pageText.includes('Relevé de compte')) {
-      mainAccountPages.push(pageText);
+      transactionPages.push(pageText);
     }
   }
 
-  console.log('[BANK-PARSER] Found', mainAccountPages.length, 'main account pages');
+  console.log('[BANK-PARSER] Found', transactionPages.length, 'main account pages');
 
-  // Process each main account page
-  for (const pageText of mainAccountPages) {
+  // Process each transaction page
+  for (const pageText of transactionPages) {
     const lines = pageText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
 
-    // Find transactions by looking for amount patterns
-    // Amount format: [+/-]XX,XX€ or [+/-]X.XXX,XX€
-    const amountPattern = /([+-])(\d{1,3}(?:\.\d{3})*,\d{2})€/;
+    // Transaction line pattern: "DESCRIPTION | DD.MM.YYYY | [+/-]XX,XX€"
+    // The line format from pdfjs is: columns joined by " | "
+    const transactionPattern = /^(.+?)\s*\|\s*(\d{2})\.(\d{2})\.(\d{4})\s*\|\s*([+-])?(\d{1,3}(?:\.\d{3})*,\d{2})\s*€$/;
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
 
-      // Check if this line contains an amount at the end
-      const amountMatch = line.match(new RegExp(amountPattern.source + '$'));
-      if (!amountMatch) continue;
+      const match = line.match(transactionPattern);
+      if (!match) continue;
 
-      const sign = amountMatch[1];
-      const amountStr = amountMatch[2];
+      const description = match[1].trim();
+      const day = match[2];
+      const month = match[3];
+      const year = match[4];
+      const sign = match[5] || '-';
+      const amountStr = match[6];
+
       const amount = parseFloat(amountStr.replace(/\./g, '').replace(',', '.'));
       if (isNaN(amount) || amount === 0) continue;
 
-      // The line format is typically: "DD.MM.YYYY [+/-]XX,XX€"
-      // The description is on preceding lines
-      const dateMatch = line.match(/(\d{2})\.(\d{2})\.(\d{4})/);
-      if (!dateMatch) continue;
-
-      const transactionDate = `${dateMatch[3]}-${dateMatch[2]}-${dateMatch[1]}`;
-
-      // Look backwards for description
-      let description = '';
-      let category: string | null = null;
-
-      for (let j = i - 1; j >= Math.max(0, i - 10); j--) {
-        const prevLine = lines[j];
-
-        // Stop conditions
-        if (prevLine.match(/(\d{2})\.(\d{2})\.(\d{4})\s*([+-])(\d{1,3}(?:\.\d{3})*,\d{2})€$/)) break; // Previous transaction
-        if (prevLine.includes('Relevé de compte')) break;
-        if (prevLine.includes('Description Date')) break;
-        if (prevLine.includes('VICTOR MICHEL PASCAL POULAIN')) break;
-        if (prevLine.includes('Rue du Gros Gérard')) break;
-        if (prevLine.match(/^\d+\s*\/\s*\d+$/)) break; // Page number
-
-        // Skip metadata
-        if (prevLine.startsWith('Date de valeur')) continue;
-        if (prevLine.startsWith('IBAN:')) continue;
-        if (prevLine.match(/^[A-Z]{4}[A-Z]{2}[A-Z0-9]{2,}/)) continue; // BIC pattern
-        if (prevLine.includes('Émis le')) continue;
-        if (prevLine.match(/^N°\s*\d+\/\d+$/)) continue;
-
-        // Check for Mastercard + category line
-        if (prevLine.startsWith('Mastercard')) {
-          for (const cat of knownCategories) {
-            if (prevLine.includes(cat)) {
-              category = cat;
-              break;
-            }
-          }
-          continue;
-        }
-
-        // Check for standalone category line
-        const matchedCategory = knownCategories.find(c => prevLine === c);
-        if (matchedCategory) {
-          category = matchedCategory;
-          continue;
-        }
-
-        // This should be the description
-        description = prevLine;
-        break;
-      }
-
-      // Skip if no valid description
-      if (!description) continue;
-      if (description.length < 2) continue;
-
-      // Skip internal transfers (De/Vers)
-      if (description.startsWith('De ')) continue;
-      if (description.startsWith('Vers ')) continue;
+      const transactionDate = `${year}-${month}-${day}`;
 
       // Skip round-ups
       if (description.includes('Arrondis')) continue;
 
-      // Skip metadata garbage
-      if (description.includes('Montant original')) continue;
-      if (description.match(/^FR\d/)) continue; // IBAN
+      // Skip headers
       if (description === 'Description') continue;
+
+      // Skip garbage
+      if (description.length < 2) continue;
+      if (description.match(/^FR\d/)) continue; // IBAN
+
+      // Look at the next line for category (if it starts with "Mastercard")
+      let category: string | null = null;
+      if (i + 1 < lines.length) {
+        const nextLine = lines[i + 1];
+        if (nextLine.startsWith('Mastercard')) {
+          for (const cat of knownCategories) {
+            if (nextLine.includes(cat)) {
+              category = cat;
+              break;
+            }
+          }
+        } else {
+          // Check if next line is a standalone category
+          for (const cat of knownCategories) {
+            if (nextLine === cat) {
+              category = cat;
+              break;
+            }
+          }
+        }
+      }
 
       const finalAmount = sign === '+' ? amount : -amount;
 
@@ -234,6 +205,7 @@ function parseN26Statement(fullText: string, pageTexts: string[]): ParsedBankSta
         amount: Math.abs(finalAmount),
         type: finalAmount > 0 ? 'income' : 'expense',
         category,
+        rawLine: line,
       });
     }
   }

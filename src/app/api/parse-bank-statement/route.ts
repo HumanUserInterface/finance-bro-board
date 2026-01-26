@@ -74,12 +74,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Return parsed data (without storing the file)
+    // Return parsed data (without storing the file, exclude rawText to keep response size small)
+    const { rawText, ...dataWithoutRawText } = parsedData;
     return NextResponse.json({
       success: true,
       fileName: file.name,
       fileSize: file.size,
-      ...parsedData,
+      ...dataWithoutRawText,
     });
   } catch (error) {
     console.error('[BANK-STATEMENT] Unexpected error:', error);
