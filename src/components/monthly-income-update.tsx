@@ -150,8 +150,8 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
         existingExpenses.forEach((expense: any) => {
           initialCategories.push({
             name: expense.name,
-            amount: expense.budget_limit || expense.amount || 0,
-            percentage: totalIncome > 0 ? ((expense.budget_limit || expense.amount || 0) / totalIncome) * 100 : 0,
+            amount: expense.amount || 0,
+            percentage: totalIncome > 0 ? ((expense.amount || 0) / totalIncome) * 100 : 0,
             type: expense.type === 'fixed' ? 'need' : 'want',
             categoryType: expense.type,
             isSavingsGoal: false,
@@ -431,24 +431,24 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
             priority: 10,
           });
         } else if (!cat.isSavingsGoal && cat.existingId) {
-          // Update expense budget_limit
+          // Update expense amount
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           await (supabase
             .from('expenses') as any)
-            .update({ budget_limit: cat.amount, amount: cat.amount })
+            .update({ amount: cat.amount, name: cat.name })
             .eq('id', cat.existingId);
         } else if (!cat.isSavingsGoal && !cat.existingId && cat.name.trim()) {
           // Create new expense from budget allocation
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          await (supabase.from('expenses') as any).insert({
+          const { error } = await (supabase.from('expenses') as any).insert({
             user_id: user.id,
             name: cat.name,
             amount: cat.amount,
-            budget_limit: cat.amount,
             type: cat.categoryType,
             is_recurring: true,
             frequency: 'monthly',
           });
+          if (error) console.error('Error creating expense:', error);
         }
       }
 
