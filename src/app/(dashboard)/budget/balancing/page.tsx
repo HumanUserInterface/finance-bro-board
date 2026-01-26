@@ -4,23 +4,42 @@ import { useState, useRef } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Upload, FileText, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
+import { Upload, FileText, AlertCircle, CheckCircle2, Loader2, Download, Trash2 } from 'lucide-react';
 
 interface ParsedTransaction {
   date: string;
   description: string;
   amount: number;
   type: 'income' | 'expense';
-  category?: string;
+  category: string | null;
+  selected?: boolean;
+}
+
+interface ParsedStatement {
+  transactions: ParsedTransaction[];
+  period: {
+    startDate: string | null;
+    endDate: string | null;
+    month: string | null;
+  };
+  summary: {
+    totalIncome: number;
+    totalExpenses: number;
+    netChange: number;
+    transactionCount: number;
+  };
+  bankName: string | null;
+  confidence: 'high' | 'medium' | 'low';
 }
 
 export default function BalancingPage() {
   const [file, setFile] = useState<File | null>(null);
-  const [uploading, setUploading] = useState(false);
   const [parsing, setParsing] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [parsedTransactions, setParsedTransactions] = useState<ParsedTransaction[]>([]);
-  const [rawText, setRawText] = useState<string>('');
+  const [parsedStatement, setParsedStatement] = useState<ParsedStatement | null>(null);
+  const [selectedTransactions, setSelectedTransactions] = useState<Set<number>>(new Set());
+  const [importSuccess, setImportSuccess] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const supabase = createClient();
 
@@ -33,8 +52,9 @@ export default function BalancingPage() {
       }
       setFile(selectedFile);
       setError(null);
-      setParsedTransactions([]);
-      setRawText('');
+      setParsedStatement(null);
+      setSelectedTransactions(new Set());
+      setImportSuccess(null);
     }
   };
 
@@ -47,27 +67,35 @@ export default function BalancingPage() {
 
     setParsing(true);
     setError(null);
+    setImportSuccess(null);
 
     try {
-      // For now, we'll read the PDF and display raw info
-      // In a production app, you'd use a PDF parsing library or server-side processing
       const formData = new FormData();
       formData.append('file', file);
 
-      // Store the file info for display purposes
-      setRawText(`File: ${file.name}\nSize: ${(file.size / 1024).toFixed(2)} KB\nType: ${file.type}\n\nPDF parsing requires server-side processing.\nThis is a testing page to verify the upload workflow works.`);
+      const response = await fetch('/api/parse-bank-statement', {
+        method: 'POST',
+        body: formData,
+      });
 
-      // Mock parsed transactions for demo
-      // In production, this would come from actual PDF parsing
-      const mockTransactions: ParsedTransaction[] = [
-        { date: '2024-12-01', description: 'Salary - Company XYZ', amount: 2500, type: 'income', category: 'Salary' },
-        { date: '2024-12-02', description: 'Supermarket', amount: -45.67, type: 'expense', category: 'Groceries' },
-        { date: '2024-12-05', description: 'Netflix', amount: -15.99, type: 'expense', category: 'Subscriptions' },
-      ];
+      const data = await response.json();
 
-      setParsedTransactions(mockTransactions);
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to parse document');
+      }
+
+      setParsedStatement({
+        transactions: data.transactions.map((tx: ParsedTransaction) => ({ ...tx, selected: true })),
+        period: data.period,
+        summary: data.summary,
+        bankName: data.bankName,
+        confidence: data.confidence,
+      });
+
+      // Select all transactions by default
+      setSelectedTransactions(new Set(data.transactions.map((_: ParsedTransaction, i: number) => i)));
     } catch (err) {
-      setError('Failed to parse document. Please try again.');
+      setError(err instanceof Error ? err.message : 'Failed to parse document');
       console.error(err);
     } finally {
       setParsing(false);
@@ -76,11 +104,82 @@ export default function BalancingPage() {
 
   const handleClearFile = () => {
     setFile(null);
-    setParsedTransactions([]);
-    setRawText('');
+    setParsedStatement(null);
+    setSelectedTransactions(new Set());
     setError(null);
+    setImportSuccess(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
+    }
+  };
+
+  const toggleTransaction = (index: number) => {
+    const newSelected = new Set(selectedTransactions);
+    if (newSelected.has(index)) {
+      newSelected.delete(index);
+    } else {
+      newSelected.add(index);
+    }
+    setSelectedTransactions(newSelected);
+  };
+
+  const toggleAllTransactions = () => {
+    if (!parsedStatement) return;
+    if (selectedTransactions.size === parsedStatement.transactions.length) {
+      setSelectedTransactions(new Set());
+    } else {
+      setSelectedTransactions(new Set(parsedStatement.transactions.map((_, i) => i)));
+    }
+  };
+
+  const handleImportTransactions = async () => {
+    if (!parsedStatement || selectedTransactions.size === 0) return;
+
+    setImporting(true);
+    setError(null);
+
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Not authenticated');
+
+      const transactionsToImport = parsedStatement.transactions
+        .filter((_, index) => selectedTransactions.has(index))
+        .map((tx) => ({
+          user_id: user.id,
+          description: tx.description,
+          amount: tx.amount,
+          type: tx.type,
+          category: tx.category || (tx.type === 'income' ? 'Income' : 'Expense'),
+          date: tx.date,
+          notes: `Imported from bank statement${parsedStatement.bankName ? ` (${parsedStatement.bankName})` : ''}`,
+        }));
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { error: insertError } = await (supabase.from('transactions') as any).insert(transactionsToImport);
+
+      if (insertError) {
+        throw new Error(insertError.message);
+      }
+
+      setImportSuccess(transactionsToImport.length);
+      // Clear selection after successful import
+      setSelectedTransactions(new Set());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to import transactions');
+      console.error(err);
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const getConfidenceBadge = (confidence: string) => {
+    switch (confidence) {
+      case 'high':
+        return <span className="px-2 py-1 text-xs rounded-full bg-green-100 text-green-700">High confidence</span>;
+      case 'medium':
+        return <span className="px-2 py-1 text-xs rounded-full bg-yellow-100 text-yellow-700">Medium confidence</span>;
+      default:
+        return <span className="px-2 py-1 text-xs rounded-full bg-red-100 text-red-700">Low confidence</span>;
     }
   };
 
@@ -159,47 +258,131 @@ export default function BalancingPage() {
           )}
 
           {error && (
-            <div className="flex items-center gap-2 text-red-600 dark:text-red-400 text-sm">
-              <AlertCircle className="h-4 w-4" />
+            <div className="flex items-center gap-2 text-red-600 dark:text-red-400 text-sm bg-red-50 dark:bg-red-950/30 p-3 rounded-lg">
+              <AlertCircle className="h-4 w-4 flex-shrink-0" />
               {error}
             </div>
           )}
         </CardContent>
       </Card>
 
-      {/* Raw Text / Debug Info */}
-      {rawText && (
+      {/* Import Success Message */}
+      {importSuccess !== null && (
+        <Card className="border-green-200 dark:border-green-800 bg-green-50/50 dark:bg-green-950/50">
+          <CardContent className="py-4">
+            <div className="flex items-center gap-3">
+              <CheckCircle2 className="h-5 w-5 text-green-600" />
+              <span className="text-green-700 dark:text-green-300">
+                Successfully imported {importSuccess} transaction{importSuccess !== 1 ? 's' : ''}!
+              </span>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Parsed Statement Summary */}
+      {parsedStatement && (
         <Card>
           <CardHeader>
-            <CardTitle>Document Info</CardTitle>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle className="flex items-center gap-3">
+                  Statement Summary
+                  {parsedStatement.bankName && (
+                    <span className="text-sm font-normal text-slate-500">({parsedStatement.bankName})</span>
+                  )}
+                </CardTitle>
+                <CardDescription>
+                  {parsedStatement.period.month || (parsedStatement.period.startDate && parsedStatement.period.endDate
+                    ? `${parsedStatement.period.startDate} to ${parsedStatement.period.endDate}`
+                    : 'Period not detected')}
+                </CardDescription>
+              </div>
+              {getConfidenceBadge(parsedStatement.confidence)}
+            </div>
           </CardHeader>
           <CardContent>
-            <pre className="bg-slate-100 dark:bg-slate-800 p-4 rounded-lg text-sm overflow-x-auto whitespace-pre-wrap">
-              {rawText}
-            </pre>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="bg-slate-50 dark:bg-slate-800 rounded-lg p-4">
+                <p className="text-sm text-slate-500">Transactions</p>
+                <p className="text-2xl font-semibold">{parsedStatement.summary.transactionCount}</p>
+              </div>
+              <div className="bg-green-50 dark:bg-green-950/30 rounded-lg p-4">
+                <p className="text-sm text-green-600">Income</p>
+                <p className="text-2xl font-semibold text-green-700">+{parsedStatement.summary.totalIncome.toFixed(2)}</p>
+              </div>
+              <div className="bg-red-50 dark:bg-red-950/30 rounded-lg p-4">
+                <p className="text-sm text-red-600">Expenses</p>
+                <p className="text-2xl font-semibold text-red-700">-{parsedStatement.summary.totalExpenses.toFixed(2)}</p>
+              </div>
+              <div className={`rounded-lg p-4 ${parsedStatement.summary.netChange >= 0 ? 'bg-green-50 dark:bg-green-950/30' : 'bg-red-50 dark:bg-red-950/30'}`}>
+                <p className="text-sm text-slate-500">Net Change</p>
+                <p className={`text-2xl font-semibold ${parsedStatement.summary.netChange >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                  {parsedStatement.summary.netChange >= 0 ? '+' : ''}{parsedStatement.summary.netChange.toFixed(2)}
+                </p>
+              </div>
+            </div>
           </CardContent>
         </Card>
       )}
 
       {/* Parsed Transactions */}
-      {parsedTransactions.length > 0 && (
+      {parsedStatement && parsedStatement.transactions.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle>Extracted Transactions</CardTitle>
-            <CardDescription>
-              {parsedTransactions.length} transactions found (mock data for testing)
-            </CardDescription>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle>Extracted Transactions</CardTitle>
+                <CardDescription>
+                  {selectedTransactions.size} of {parsedStatement.transactions.length} selected for import
+                </CardDescription>
+              </div>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={toggleAllTransactions}>
+                  {selectedTransactions.size === parsedStatement.transactions.length ? 'Deselect All' : 'Select All'}
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={handleImportTransactions}
+                  disabled={importing || selectedTransactions.size === 0}
+                >
+                  {importing ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Importing...
+                    </>
+                  ) : (
+                    <>
+                      <Download className="mr-2 h-4 w-4" />
+                      Import Selected ({selectedTransactions.size})
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
           </CardHeader>
           <CardContent>
-            <div className="space-y-2">
-              {parsedTransactions.map((tx, index) => (
+            <div className="space-y-2 max-h-[500px] overflow-y-auto">
+              {parsedStatement.transactions.map((tx, index) => (
                 <div
                   key={index}
-                  className="flex items-center justify-between py-3 px-4 bg-slate-50 dark:bg-slate-800 rounded-lg"
+                  onClick={() => toggleTransaction(index)}
+                  className={`flex items-center justify-between py-3 px-4 rounded-lg cursor-pointer transition-colors ${
+                    selectedTransactions.has(index)
+                      ? 'bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800'
+                      : 'bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700'
+                  }`}
                 >
                   <div className="flex items-center gap-4">
-                    <span className="text-sm text-slate-400 font-mono">
-                      {new Date(tx.date).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit' })}
+                    <input
+                      type="checkbox"
+                      checked={selectedTransactions.has(index)}
+                      onChange={() => toggleTransaction(index)}
+                      className="h-4 w-4 rounded border-slate-300"
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                    <span className="text-sm text-slate-400 font-mono w-20">
+                      {new Date(tx.date).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit' })}
                     </span>
                     <div>
                       <p className="font-medium">{tx.description}</p>
@@ -215,8 +398,8 @@ export default function BalancingPage() {
                         : 'text-red-600 dark:text-red-400'
                     }`}
                   >
-                    {tx.type === 'income' ? '+' : ''}
-                    {tx.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                    {tx.type === 'income' ? '+' : '-'}
+                    {tx.amount.toFixed(2)}
                   </span>
                 </div>
               ))}
@@ -225,22 +408,27 @@ export default function BalancingPage() {
         </Card>
       )}
 
-      {/* Info Card */}
-      <Card className="border-blue-200 dark:border-blue-800 bg-blue-50/50 dark:bg-blue-950/50">
-        <CardContent className="py-4">
-          <div className="flex items-start gap-3">
-            <AlertCircle className="h-5 w-5 text-blue-600 dark:text-blue-400 mt-0.5" />
-            <div className="text-sm text-blue-700 dark:text-blue-300">
-              <p className="font-medium mb-1">Testing Mode</p>
-              <p>
-                This page is for testing the bank statement import workflow.
-                Actual PDF parsing will be implemented with server-side processing
-                to extract transaction data from N26 and other bank statements.
-              </p>
+      {/* No transactions found */}
+      {parsedStatement && parsedStatement.transactions.length === 0 && (
+        <Card className="border-yellow-200 dark:border-yellow-800 bg-yellow-50/50 dark:bg-yellow-950/50">
+          <CardContent className="py-6">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="h-5 w-5 text-yellow-600 mt-0.5" />
+              <div>
+                <p className="font-medium text-yellow-700 dark:text-yellow-300">No transactions found</p>
+                <p className="text-sm text-yellow-600 dark:text-yellow-400">
+                  The parser could not extract transactions from this PDF. This might happen if:
+                </p>
+                <ul className="text-sm text-yellow-600 dark:text-yellow-400 list-disc ml-4 mt-2">
+                  <li>The PDF format is not yet supported</li>
+                  <li>The statement is scanned (image-based) rather than text-based</li>
+                  <li>The file is password protected or corrupted</li>
+                </ul>
+              </div>
             </div>
-          </div>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }
