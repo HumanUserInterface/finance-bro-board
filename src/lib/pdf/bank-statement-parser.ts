@@ -186,14 +186,14 @@ function parseN26Statement(
       const datePos = textBefore.lastIndexOf(dateMatch[0]);
       let description = textBefore.substring(0, datePos).trim();
 
-      // Clean up description - remove IBAN/BIC/bank noise
+      // Clean up description - remove bank noise
       description = description
         .replace(/Mastercard.*$/i, '')
         .replace(/Date de valeur.*$/i, '')
-        .replace(/\d{10,}/g, '') // Remove long number sequences (IBAN fragments)
-        .replace(/[A-Z]{4}[A-Z0-9]{2,}[A-Z0-9]*/g, '') // Remove BIC-like codes
-        .replace(/BIC[:\s]+\S+/gi, '')
-        .replace(/IBAN[:\s]+\S+/gi, '')
+        .replace(/\d{15,}/g, '') // Remove very long number sequences (full IBAN)
+        .replace(/BIC[:\s]+[A-Z0-9]+/gi, '')
+        .replace(/IBAN[:\s]+[A-Z0-9\s]+/gi, '')
+        .replace(/NTSBFRM\w*/gi, '') // N26 BIC
         .replace(/Émis le.*$/i, '')
         .replace(/Emis le.*$/i, '')
         .replace(/•/g, '')
@@ -249,85 +249,6 @@ function parseN26Statement(
       });
     }
 
-    // Strategy 2: Find date patterns and look for amounts after them
-    // This catches amounts that might not have explicit +/- signs
-    const dateRegex = /(\d{2})\.(\d{2})\.(\d{4})/g;
-    let dateMatch;
-
-    while ((dateMatch = dateRegex.exec(pageText)) !== null) {
-      const datePos = dateMatch.index + dateMatch[0].length;
-      const textAfter = pageText.substring(datePos, datePos + 150);
-
-      // Look for an amount (with or without sign)
-      const unsignedAmountMatch = textAfter.match(/^\s*(?:Date de valeur[^€]*?)?\s*([+-]?)(\d{1,3}(?:[.\s]\d{3})*(?:[,]\d{1,2})?)\s*€/);
-
-      if (!unsignedAmountMatch) continue;
-
-      const sign = unsignedAmountMatch[1] || '-'; // Default to expense if no sign
-      const amountValue = unsignedAmountMatch[2].replace(/[\s.]/g, '').replace(',', '.');
-      const amount = parseFloat(amountValue);
-
-      if (isNaN(amount) || amount === 0) continue;
-
-      const formattedDate = `${dateMatch[3]}-${dateMatch[2]}-${dateMatch[1]}`;
-
-      // Look backwards from date for description
-      const textBefore = pageText.substring(Math.max(0, dateMatch.index - 200), dateMatch.index);
-      let description = textBefore.trim();
-
-      // Clean up description - remove IBAN/BIC/bank noise
-      description = description
-        .replace(/Mastercard.*$/i, '')
-        .replace(/.*Date de valeur[^€]*€\s*/i, '')
-        .replace(/\d{10,}/g, '') // Remove long number sequences (IBAN fragments)
-        .replace(/[A-Z]{4}[A-Z0-9]{2,}[A-Z0-9]*/g, '') // Remove BIC-like codes
-        .replace(/BIC[:\s]+\S+/gi, '')
-        .replace(/IBAN[:\s]+\S+/gi, '')
-        .replace(/Émis le.*$/i, '')
-        .replace(/Emis le.*$/i, '')
-        .replace(/•/g, '')
-        .replace(/\s+/g, ' ')
-        .trim();
-
-      // Get last meaningful part
-      if (description.length > 80) {
-        const parts = description.split(/\s{2,}/);
-        description = parts[parts.length - 1] || description.substring(description.length - 80);
-      }
-
-      // Skip internal transfers, headers, and garbage data
-      if (
-        description.startsWith('De ') ||
-        description.startsWith('Vers ') ||
-        description.includes('Arrondis') ||
-        description.includes('VICTOR MICHEL') ||
-        description.includes('IBAN') ||
-        description.includes('BIC:') ||
-        description.includes('BIC ') ||
-        description.includes('Relevé') ||
-        description.includes('Solde') ||
-        description.includes('Description') ||
-        description.includes('Émis le') ||
-        description.includes('Emis le') ||
-        description.includes('NTSBFRM') ||
-        description.includes('N26 Bank') ||
-        /^\d{6,}/.test(description) || // Starts with long number (IBAN fragment)
-        /^[A-Z0-9]{8,}$/.test(description) || // Just a code
-        description.length < 2
-      ) {
-        continue;
-      }
-
-      const finalAmount = sign === '+' ? amount : -amount;
-
-      transactions.push({
-        date: formattedDate,
-        description: description || 'Transaction',
-        amount: Math.abs(finalAmount),
-        type: finalAmount > 0 ? 'income' : 'expense',
-        category: null,
-      });
-    }
   }
 
   // Alternative parsing: look for specific line patterns
@@ -348,9 +269,9 @@ function parseN26Statement(
         let description = line
           .substring(0, line.indexOf(dateMatch[0]))
           .replace(/Mastercard.*$/i, '')
-          .replace(/\d{10,}/g, '')
-          .replace(/[A-Z]{4}[A-Z0-9]{2,}[A-Z0-9]*/g, '')
-          .replace(/BIC[:\s]+\S+/gi, '')
+          .replace(/\d{15,}/g, '')
+          .replace(/BIC[:\s]+[A-Z0-9]+/gi, '')
+          .replace(/NTSBFRM\w*/gi, '')
           .replace(/Émis le.*$/i, '')
           .replace(/•/g, '')
           .replace(/\s+/g, ' ')
