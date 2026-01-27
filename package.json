@@ -1,0 +1,43 @@
+{
+  "name": "finance-bro-board",
+  "version": "1.0.0",
+  "description": "Multi-agent AI financial advisory board",
+  "main": "dist/index.js",
+  "type": "module",
+  "bin": {
+    "finance-bro": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc && npm run copy-personas",
+    "copy-personas": "cp -r src/personas/defaults dist/personas/",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "test": "vitest",
+    "lint": "eslint src/",
+    "format": "prettier --write src/"
+  },
+  "dependencies": {
+    "together-ai": "^0.33.0",
+    "zod": "^3.23.0",
+    "zod-to-json-schema": "^3.23.0",
+    "commander": "^12.1.0",
+    "@inquirer/prompts": "^7.0.0",
+    "chalk": "^5.3.0",
+    "ora": "^8.1.0",
+    "dotenv": "^16.4.0",
+    "nanoid": "^5.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "vitest": "^2.0.0",
+    "eslint": "^9.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "prettier": "^3.3.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
