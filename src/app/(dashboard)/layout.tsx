@@ -1,4 +1,4 @@
-import { Sidebar } from '@/components/layout/sidebar';
+import { DesktopSidebar } from '@/components/layout/sidebar';
 import { Header } from '@/components/layout/header';
 
 export default function DashboardLayout({
@@ -8,7 +8,7 @@ export default function DashboardLayout({
 }) {
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950">
-      <Sidebar />
+      <DesktopSidebar />
       <div className="lg:pl-64">
         <Header />
         <main className="p-6">{children}</main>

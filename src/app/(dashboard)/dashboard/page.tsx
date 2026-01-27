@@ -7,7 +7,7 @@ import { Progress } from '@/components/ui/progress';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import Link from 'next/link';
-import { PlusCircle, TrendingUp, TrendingDown, Wallet, Target, PiggyBank, CheckCircle2, XCircle, Loader2, Upload } from 'lucide-react';
+import { PlusCircle, Wallet, Target, PiggyBank, CheckCircle2, XCircle, Loader2, Upload } from 'lucide-react';
 import type { Tables } from '@/types/database';
 import { IncomeReminderBanner } from '@/components/income-reminder-banner';
 import { MonthlyIncomeUpdate } from '@/components/monthly-income-update';
@@ -56,6 +56,20 @@ export default function DashboardPage() {
       one_time: 0,
     };
 
+    // Subscription categories - expenses with these in notes are subscriptions
+    const SUBSCRIPTION_CATEGORIES = [
+      'streaming', 'music', 'ai_tools', 'software', 'gaming',
+      'cloud_storage', 'news_media', 'mobile_apps', 'other'
+    ];
+
+    // Helper to check if an expense is a subscription
+    const isSubscription = (expense: Tables<'expenses'>): boolean => {
+      if (!expense.notes) return false;
+      const match = expense.notes.match(/Category: (\w+)/);
+      if (!match) return false;
+      return SUBSCRIPTION_CATEGORIES.includes(match[1]);
+    };
+
     // Fetch all financial data in parallel
     const [incomeRes, expensesRes, billsRes, goalsRes, purchasesRes, deliberationsRes] = await Promise.all([
       supabase.from('income_sources').select('*').eq('is_active', true),
@@ -78,8 +92,11 @@ export default function DashboardPage() {
       return total + inc.amount * (frequencyMultipliers[inc.frequency] || 0);
     }, 0);
 
+    // Only count subscriptions (expenses with subscription category in notes) as fixed expenses
+    // Discretionary budget items (groceries, entertainment) without subscription categories
+    // should remain as part of discretionary budget
     const monthlyExpenses = expenses
-      .filter((e) => e.is_recurring)
+      .filter((e) => e.is_recurring && isSubscription(e))
       .reduce((total, exp) => {
         return total + exp.amount * (frequencyMultipliers[exp.frequency || 'monthly'] || 0);
       }, 0);
@@ -171,7 +188,7 @@ export default function DashboardPage() {
 
         <Card className="border-black/10">
           <CardHeader className="pb-2">
-            <CardTitle className="text-xs font-medium uppercase tracking-widest text-black/40">Monthly Expenses</CardTitle>
+            <CardTitle className="text-xs font-medium uppercase tracking-widest text-black/40">Subscriptions</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-semibold">
@@ -278,7 +295,7 @@ export default function DashboardPage() {
               <div className="flex justify-between text-sm">
                 <span className="flex items-center gap-2">
                   <div className="h-3 w-3 rounded-full bg-black/60" />
-                  Expenses
+                  Subscriptions
                 </span>
                 <span>${stats?.monthlyExpenses.toLocaleString('en-US', { minimumFractionDigits: 2 }) ?? '0.00'}</span>
               </div>
@@ -303,6 +320,33 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Quick Actions */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Wallet className="h-5 w-5" />
+            Bank Analysis
+          </CardTitle>
+          <CardDescription>Import and analyze your bank statements</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex gap-4">
+            <Link href="/bank/import">
+              <Button variant="outline">
+                <Upload className="mr-2 h-4 w-4" />
+                Import Statements
+              </Button>
+            </Link>
+            <Link href="/bank/flow">
+              <Button variant="outline">
+                <Target className="mr-2 h-4 w-4" />
+                View Money Flow
+              </Button>
+            </Link>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Recent Deliberations */}
       <Card>
