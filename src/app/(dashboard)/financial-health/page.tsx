@@ -20,6 +20,7 @@ import {
   DollarSign,
   Loader2,
 } from 'lucide-react';
+import type { Tables } from '@/types/database';
 
 interface FinancialData {
   monthlyIncome: number;
@@ -171,11 +172,11 @@ export default function FinancialHealthPage() {
       supabase.from('savings_accounts').select('*').eq('user_id', user.id).eq('is_active', true),
     ]);
 
-    const incomes = incomeRes.data || [];
-    const expenses = expensesRes.data || [];
-    const bills = billsRes.data || [];
-    const goals = goalsRes.data || [];
-    const accounts = accountsRes.data || [];
+    const incomes = (incomeRes.data || []) as Tables<'income_sources'>[];
+    const expenses = (expensesRes.data || []) as Tables<'expenses'>[];
+    const bills = (billsRes.data || []) as Tables<'bills'>[];
+    const goals = (goalsRes.data || []) as Tables<'savings_goals'>[];
+    const accounts = (accountsRes.data || []) as Tables<'savings_accounts'>[];
 
     const frequencyMultipliers: Record<string, number> = {
       weekly: 4.33,
