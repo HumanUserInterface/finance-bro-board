@@ -3,6 +3,13 @@ import { createClient } from '@supabase/supabase-js';
 import { z } from 'zod';
 import { complete } from '@/lib/llm/together';
 import { getBuiltInPersonas, type Persona } from '@/lib/personas';
+import {
+  type FinancialContext,
+  type FinancialAnalysis,
+  generateFinancialAnalysis,
+  getFinancialInsights,
+  type FinancialInsights,
+} from '@/lib/financial';
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -40,30 +47,21 @@ const VoteSchema = z.object({
   catchphrase: z.string().describe('One of your signature catchphrases that fits this decision'),
 });
 
-interface FinancialContext {
-  monthlyIncome: number;
-  monthlyExpenses: number;
-  monthlyBills: number;
-  discretionaryBudget: number;
-  totalSavings: number;
-  savingsGoals: Array<{ name: string; target: number; current: number; progress: number }>;
-  incomeBreakdown: Array<{ name: string; amount: number; frequency: string }>;
-  expenseBreakdown: Array<{ name: string; amount: number; type: string }>;
-}
-
 async function getFinancialContext(userId: string): Promise<FinancialContext> {
-  // Fetch all financial data in parallel
-  const [incomeRes, expensesRes, billsRes, goalsRes] = await Promise.all([
+  // Fetch all financial data in parallel (only manually entered data, not bank statements)
+  const [incomeRes, expensesRes, billsRes, goalsRes, accountsRes] = await Promise.all([
     supabase.from('income_sources').select('*').eq('user_id', userId).eq('is_active', true),
     supabase.from('expenses').select('*').eq('user_id', userId).eq('is_active', true),
     supabase.from('bills').select('*').eq('user_id', userId).eq('is_active', true),
     supabase.from('savings_goals').select('*').eq('user_id', userId).eq('is_active', true),
+    supabase.from('savings_accounts').select('*').eq('user_id', userId).eq('is_active', true),
   ]);
 
   const incomes = incomeRes.data || [];
   const expenses = expensesRes.data || [];
   const bills = billsRes.data || [];
   const goals = goalsRes.data || [];
+  const accounts = accountsRes.data || [];
 
   // Calculate monthly totals
   const frequencyMultipliers: Record<string, number> = {
@@ -79,8 +77,9 @@ async function getFinancialContext(userId: string): Promise<FinancialContext> {
     return total + inc.amount * (frequencyMultipliers[inc.frequency] || 0);
   }, 0);
 
+  // Only count fixed recurring expenses (subscriptions), not variable budget allocations (wants)
   const monthlyExpenses = expenses
-    .filter((e) => e.is_recurring)
+    .filter((e) => e.is_recurring && e.type === 'fixed')
     .reduce((total, exp) => {
       return total + exp.amount * (frequencyMultipliers[exp.frequency || 'monthly'] || 0);
     }, 0);
@@ -91,7 +90,15 @@ async function getFinancialContext(userId: string): Promise<FinancialContext> {
 
   const discretionaryBudget = monthlyIncome - monthlyExpenses - monthlyBills;
 
-  const totalSavings = goals.reduce((total, goal) => total + goal.current_amount, 0);
+  // Total savings from both goals and accounts
+  const savingsFromGoals = goals.reduce((total, goal) => total + goal.current_amount, 0);
+  const savingsFromAccounts = accounts
+    .filter(a => a.type === 'savings' || a.type === 'checking')
+    .reduce((total, acc) => total + acc.balance, 0);
+  const totalSavings = savingsFromGoals + savingsFromAccounts;
+
+  // Estimate debt (could be expanded with a debt table in the future)
+  const totalDebt = 0; // Placeholder - would need debt tracking table
 
   const savingsGoals = goals.map((goal) => ({
     name: goal.name,
@@ -118,9 +125,11 @@ async function getFinancialContext(userId: string): Promise<FinancialContext> {
     monthlyBills,
     discretionaryBudget,
     totalSavings,
+    totalDebt,
     savingsGoals,
     incomeBreakdown,
     expenseBreakdown,
+    recentTransactions: [], // Not using bank transactions, only manual data
   };
 }
 
@@ -141,8 +150,14 @@ async function runBoardMember(
   purchaseDescription: string | null,
   purchaseUrgency: string,
   purchaseContext: string | null,
-  financialContext: FinancialContext
+  financialContext: FinancialContext,
+  financialAnalysis: FinancialAnalysis,
+  financialInsights: FinancialInsights
 ): Promise<BoardMemberResult> {
+  const budgetPercentage = financialContext.discretionaryBudget > 0
+    ? ((purchasePrice / financialContext.discretionaryBudget) * 100).toFixed(1)
+    : 'N/A';
+
   const financialSummary = `
 FINANCIAL CONTEXT:
 - Monthly Income: $${financialContext.monthlyIncome.toFixed(2)}
@@ -151,7 +166,23 @@ FINANCIAL CONTEXT:
 - Discretionary Budget: $${financialContext.discretionaryBudget.toFixed(2)}
 - Total Savings: $${financialContext.totalSavings.toFixed(2)}
 - Savings Goals: ${financialContext.savingsGoals.map((g) => `${g.name} (${g.progress.toFixed(0)}%)`).join(', ') || 'None'}
-- This purchase represents ${((purchasePrice / financialContext.discretionaryBudget) * 100).toFixed(1)}% of monthly discretionary budget
+
+FINANCIAL HEALTH ASSESSMENT:
+- Health Score: ${financialAnalysis.health.score}/100 (${financialAnalysis.health.riskLevel} risk)
+- Savings Rate: ${financialAnalysis.health.savingsRate.toFixed(1)}%
+- Emergency Fund: ${financialAnalysis.health.emergencyFundMonths.toFixed(1)} months of expenses
+- Affordability: ${financialAnalysis.affordability.recommendation.replace('_', ' ')}
+
+PURCHASE IMPACT:
+- This purchase represents ${budgetPercentage}% of monthly discretionary budget
+- ${financialAnalysis.affordability.percentageOfSavings.toFixed(1)}% of total savings
+- Assessment: ${financialInsights.affordabilityVerdict.replace('_', ' ')}
+
+KEY FINANCIAL CONCERNS:
+${financialInsights.keyFinancialConcerns.map(c => `- ${c}`).join('\n') || '- None identified'}
+
+FINANCIAL RECOMMENDATION:
+${financialInsights.financialRecommendation}
 `;
 
   const purchaseSummary = `
@@ -237,7 +268,7 @@ Voice: ${persona.voiceDescription}
         role: 'user',
         content: `${financialSummary}\n${purchaseSummary}\n\nYour research: ${JSON.stringify(research, null, 2)}\nYour reasoning: ${JSON.stringify(reasoning, null, 2)}\nYour critique: ${JSON.stringify(critique, null, 2)}\n\nAs ${persona.name}, cast your final vote and respond with JSON containing EXACTLY these fields:
 - vote: either "approve" or "reject"
-- reasoning: a 2-3 sentence justification explaining WHY (reference specific numbers like "At ${((purchasePrice / financialContext.discretionaryBudget) * 100).toFixed(1)}% of discretionary budget...")
+- reasoning: a 2-3 sentence justification explaining WHY (reference specific numbers like "At ${budgetPercentage}% of discretionary budget...")
 - confidence: a number from 0 to 100
 - keyFactors: an array of 2-3 strings with the main factors driving your decision
 - catchphrase: one of your signature catchphrases that fits this decision`,
@@ -287,6 +318,37 @@ export async function POST(request: NextRequest) {
     // Get financial context
     const financialContext = await getFinancialContext(purchase.user_id);
 
+    // Generate financial analysis
+    const financialAnalysis = generateFinancialAnalysis(purchase.price, financialContext);
+
+    // Get AI-powered financial insights
+    let financialInsights: FinancialInsights;
+    try {
+      financialInsights = await getFinancialInsights(
+        purchase.item,
+        purchase.price,
+        purchase.category,
+        purchase.urgency,
+        financialContext,
+        financialAnalysis
+      );
+    } catch (err) {
+      console.error('Financial insights failed, using defaults:', err);
+      // Fallback if LLM call fails
+      financialInsights = {
+        budgetAssessment: financialAnalysis.summary,
+        affordabilityVerdict: financialAnalysis.affordability.recommendation === 'easily_affordable' ? 'easily_affordable' :
+          financialAnalysis.affordability.recommendation === 'affordable' ? 'affordable' :
+          financialAnalysis.affordability.recommendation === 'stretch' ? 'stretch' :
+          financialAnalysis.affordability.recommendation === 'not_recommended' ? 'risky' : 'unaffordable',
+        keyFinancialConcerns: financialAnalysis.health.recommendations,
+        spendingPatternInsights: [],
+        financialRecommendation: financialAnalysis.affordability.recommendationReason,
+        riskFactors: financialAnalysis.affordability.impactOnSavingsGoals,
+        alternativeSuggestions: [],
+      };
+    }
+
     // Get all personas
     const personas = getBuiltInPersonas();
 
@@ -307,7 +369,9 @@ export async function POST(request: NextRequest) {
             purchase.description,
             purchase.urgency,
             purchase.context,
-            financialContext
+            financialContext,
+            financialAnalysis,
+            financialInsights
           )
         )
       );
@@ -320,6 +384,13 @@ export async function POST(request: NextRequest) {
     const finalDecision = approveCount > rejectCount ? 'approve' : 'reject';
     const isUnanimous = approveCount === personas.length || rejectCount === personas.length;
 
+    // Enhanced financial context for storage
+    const enrichedFinancialContext = {
+      ...financialContext,
+      analysis: financialAnalysis,
+      insights: financialInsights,
+    };
+
     // Create deliberation record
     const { data: deliberation, error: delibError } = await supabase
       .from('deliberations')
@@ -330,9 +401,9 @@ export async function POST(request: NextRequest) {
         approve_count: approveCount,
         reject_count: rejectCount,
         is_unanimous: isUnanimous,
-        summary: `The board voted ${approveCount}-${rejectCount} to ${finalDecision} this purchase.`,
+        summary: `The board voted ${approveCount}-${rejectCount} to ${finalDecision} this purchase. Financial assessment: ${financialInsights.affordabilityVerdict.replace('_', ' ')}.`,
         total_processing_time_ms: Date.now() - startTime,
-        financial_context: financialContext,
+        financial_context: enrichedFinancialContext,
         started_at: new Date(startTime).toISOString(),
         completed_at: new Date().toISOString(),
       })
@@ -370,6 +441,7 @@ export async function POST(request: NextRequest) {
       approveCount,
       rejectCount,
       isUnanimous,
+      financialAssessment: financialInsights.affordabilityVerdict,
     });
   } catch (error) {
     console.error('Deliberation error:', error);

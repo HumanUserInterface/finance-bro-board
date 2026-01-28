@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { createClient } from '@/lib/supabase/client';
-import { Home, Target, PiggyBank } from 'lucide-react';
+import { Home, Target, PiggyBank, CreditCard } from 'lucide-react';
 
 interface MonthlyIncomeUpdateProps {
   isOpen: boolean;
@@ -26,6 +26,7 @@ interface BudgetCategory {
   existingId?: string; // Track existing expense/savings goal ID
 }
 
+
 export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncomeUpdateProps) {
   const [activeTab, setActiveTab] = useState<'paycheck' | 'benefits' | 'budget'>('paycheck');
   const [currentIncome, setCurrentIncome] = useState<CurrentIncome>({
@@ -40,11 +41,14 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
   const [isSaving, setIsSaving] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Budget allocation state
   const [budgetCategories, setBudgetCategories] = useState<BudgetCategory[]>([]);
   const [deletedCategories, setDeletedCategories] = useState<{ id: string; isSavingsGoal: boolean }[]>([]);
+  const [subscriptionsTotal, setSubscriptionsTotal] = useState(0); // Total for all subscriptions (not editable)
+  const [billsTotal, setBillsTotal] = useState(0); // Total for all bills (not editable)
 
   // Month and year selection - default to current month
   const currentDate = new Date();
@@ -116,6 +120,34 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
     }
   };
 
+  // Subscription categories from the subscriptions module
+  const SUBSCRIPTION_CATEGORIES = [
+    'streaming', 'music', 'ai_tools', 'software', 'gaming',
+    'cloud_storage', 'news_media', 'mobile_apps', 'other'
+  ];
+
+  // Helper to check if an expense is a subscription (has subscription category in notes)
+  const isSubscription = (expense: any): boolean => {
+    if (!expense.notes) return false;
+    const match = expense.notes.match(/Category: (\w+)/);
+    if (!match) return false;
+    return SUBSCRIPTION_CATEGORIES.includes(match[1]);
+  };
+
+  // Calculate subscription monthly equivalent
+  const getSubscriptionMonthlyAmount = (expense: any): number => {
+    const multipliers: Record<string, number> = {
+      weekly: 4.33,
+      biweekly: 2.17,
+      monthly: 1,
+      quarterly: 0.33,
+      annually: 0.083,
+    };
+    const amount = expense.amount || 0;
+    const frequency = expense.frequency || 'monthly';
+    return amount * (multipliers[frequency] || 1);
+  };
+
   const loadBudgetAllocations = async () => {
     try {
       const supabase = createClient();
@@ -129,10 +161,18 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
 
       if (totalIncome === 0) return;
 
-      // Load existing expenses
+      // Load existing expenses (subscriptions)
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data: existingExpenses } = await (supabase
         .from('expenses')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('is_active', true) as any);
+
+      // Load existing bills from the bills table
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: existingBills } = await (supabase
+        .from('bills')
         .select('*')
         .eq('user_id', user.id)
         .eq('is_active', true) as any);
@@ -146,21 +186,48 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
         .eq('is_active', true) as any);
 
       const initialCategories: BudgetCategory[] = [];
+      let subsTotal = 0;
 
-      // Convert existing expenses to budget categories
+      // Separate subscriptions from discretionary expenses
       if (existingExpenses && existingExpenses.length > 0) {
         existingExpenses.forEach((expense: any) => {
-          initialCategories.push({
-            name: expense.name,
-            amount: expense.amount || 0,
-            percentage: totalIncome > 0 ? ((expense.amount || 0) / totalIncome) * 100 : 0,
-            type: expense.type === 'fixed' ? 'need' : 'want',
-            categoryType: expense.type,
-            isSavingsGoal: false,
-            existingId: expense.id,
-          });
+          if (isSubscription(expense)) {
+            // Subscriptions: add to total (managed in Expenses page)
+            subsTotal += getSubscriptionMonthlyAmount(expense);
+          } else {
+            // Discretionary expenses (groceries, entertainment, etc.): add as editable Wants
+            const monthlyAmount = getSubscriptionMonthlyAmount(expense);
+            initialCategories.push({
+              name: expense.name,
+              amount: monthlyAmount,
+              percentage: totalIncome > 0 ? (monthlyAmount / totalIncome) * 100 : 0,
+              type: 'want',
+              categoryType: 'variable',
+              isSavingsGoal: false,
+              existingId: expense.id,
+            });
+          }
         });
       }
+
+      setSubscriptionsTotal(subsTotal);
+
+      // Calculate bills total from the bills table (read-only, managed in Bills page)
+      let billsSum = 0;
+      if (existingBills && existingBills.length > 0) {
+        existingBills.forEach((bill: any) => {
+          // Calculate monthly equivalent for bills
+          const multipliers: Record<string, number> = {
+            weekly: 4.33,
+            biweekly: 2.17,
+            monthly: 1,
+            quarterly: 0.33,
+            annually: 0.083,
+          };
+          billsSum += (bill.amount || 0) * (multipliers[bill.frequency || 'monthly'] || 1);
+        });
+      }
+      setBillsTotal(billsSum);
 
       // Add existing savings goals
       if (existingSavings && existingSavings.length > 0) {
@@ -229,18 +296,66 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
     setBudgetCategories((prev) => prev.filter((_, i) => i !== index));
   };
 
+  const applyAutoBudget = () => {
+    const totalIncome = (newSalary || currentIncome.salary || 0) + newApl + newPrimeActivite;
+    if (totalIncome === 0) return;
+
+    // Mark all existing categories for deletion (but not subscriptions - they're managed elsewhere)
+    budgetCategories.forEach((cat) => {
+      if (cat.existingId) {
+        setDeletedCategories((prev) => [
+          ...prev,
+          { id: cat.existingId!, isSavingsGoal: cat.isSavingsGoal || false }
+        ]);
+      }
+    });
+
+    // Calculate available budget after subscriptions and bills
+    const subscriptionsPercentage = totalIncome > 0 ? (subscriptionsTotal / totalIncome) * 100 : 0;
+    const billsPercentage = totalIncome > 0 ? (billsTotal / totalIncome) * 100 : 0;
+    const availableForBudget = 100 - subscriptionsPercentage - billsPercentage;
+
+    // Split remaining budget between wants (60%) and savings (40%)
+    // Bills and subscriptions are managed separately
+    const wantsRatio = 0.60;
+    const savingsRatio = 0.40;
+
+    const adjustedWants = availableForBudget * wantsRatio;
+    const adjustedSavings = availableForBudget * savingsRatio;
+
+    // Auto budget for Wants and Savings only (bills/subscriptions managed separately)
+    const autoBudget: BudgetCategory[] = [
+      // Wants (60% of available after bills/subscriptions)
+      { name: 'Groceries', amount: totalIncome * (adjustedWants * 0.50 / 100), percentage: adjustedWants * 0.50, type: 'want', categoryType: 'variable' },
+      { name: 'Entertainment', amount: totalIncome * (adjustedWants * 0.17 / 100), percentage: adjustedWants * 0.17, type: 'want', categoryType: 'variable' },
+      { name: 'Shopping', amount: totalIncome * (adjustedWants * 0.17 / 100), percentage: adjustedWants * 0.17, type: 'want', categoryType: 'variable' },
+      { name: 'Dining Out', amount: totalIncome * (adjustedWants * 0.16 / 100), percentage: adjustedWants * 0.16, type: 'want', categoryType: 'variable' },
+      // Savings (40% of available after bills/subscriptions)
+      { name: 'Emergency Fund', amount: totalIncome * (adjustedSavings * 0.50 / 100), percentage: adjustedSavings * 0.50, type: 'saving', categoryType: 'variable', isSavingsGoal: true },
+      { name: 'Projects', amount: totalIncome * (adjustedSavings * 0.50 / 100), percentage: adjustedSavings * 0.50, type: 'saving', categoryType: 'variable', isSavingsGoal: true },
+    ];
+
+    setBudgetCategories(autoBudget);
+  };
+
   const calculateBudgetTotals = () => {
+    const totalIncome = (newSalary || currentIncome.salary || 0) + newApl + newPrimeActivite;
+    const subscriptionsPercentage = totalIncome > 0 ? (subscriptionsTotal / totalIncome) * 100 : 0;
+    const billsPercentage = totalIncome > 0 ? (billsTotal / totalIncome) * 100 : 0;
+
     const byType = {
       need: 0,
       want: 0,
       saving: 0,
+      subscriptions: subscriptionsPercentage,
+      bills: billsPercentage,
     };
 
     budgetCategories.forEach((cat) => {
       byType[cat.type] += cat.percentage;
     });
 
-    const total = byType.need + byType.want + byType.saving;
+    const total = byType.need + byType.want + byType.saving + byType.subscriptions + byType.bills;
 
     return { byType, total };
   };
@@ -259,6 +374,13 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
         method: 'POST',
         body: formData,
       });
+
+      // Check content-type before parsing JSON
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        console.error('Server returned non-JSON response:', contentType);
+        throw new Error('Server error. Please check the console and try again.');
+      }
 
       const result = await response.json();
 
@@ -309,14 +431,16 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
 
   const handleSave = async () => {
     setIsSaving(true);
+    setSaveError(null);
 
     try {
       const supabase = createClient();
       const {
         data: { user },
+        error: authError,
       } = await supabase.auth.getUser();
 
-      if (!user) throw new Error('Not authenticated');
+      if (authError || !user) throw new Error('Not authenticated');
 
       // Update salary if changed
       if (newSalary !== null && newSalary !== currentIncome.salary) {
@@ -331,19 +455,22 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
 
         if (existingSalary) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          await (supabase
+          const { error } = await (supabase
             .from('income_sources') as any)
             .update({ amount: newSalary, updated_at: new Date().toISOString() })
             .eq('id', existingSalary.id);
+          if (error) throw new Error(`Failed to update salary: ${error.message}`);
         } else {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          await (supabase.from('income_sources') as any).insert({
+          const { error } = await (supabase.from('income_sources') as any).insert({
             user_id: user.id,
             name: 'Monthly Salary',
             type: 'salary',
             amount: newSalary,
             frequency: 'monthly',
+            is_active: true,
           });
+          if (error) throw new Error(`Failed to create salary: ${error.message}`);
         }
       }
 
@@ -361,24 +488,28 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
         if (newApl > 0) {
           if (existingApl) {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            await (supabase
+            const { error } = await (supabase
               .from('income_sources') as any)
               .update({ amount: newApl, updated_at: new Date().toISOString() })
               .eq('id', existingApl.id);
+            if (error) throw new Error(`Failed to update APL: ${error.message}`);
           } else {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            await (supabase.from('income_sources') as any).insert({
+            const { error } = await (supabase.from('income_sources') as any).insert({
               user_id: user.id,
               name: 'APL',
               type: 'apl',
               amount: newApl,
               frequency: 'monthly',
+              is_active: true,
             });
+            if (error) throw new Error(`Failed to create APL: ${error.message}`);
           }
         } else if (existingApl) {
           // If set to 0, deactivate
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          await (supabase.from('income_sources') as any).update({ is_active: false }).eq('id', existingApl.id);
+          const { error } = await (supabase.from('income_sources') as any).update({ is_active: false }).eq('id', existingApl.id);
+          if (error) throw new Error(`Failed to deactivate APL: ${error.message}`);
         }
       }
 
@@ -396,42 +527,50 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
         if (newPrimeActivite > 0) {
           if (existingPrime) {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            await (supabase
+            const { error } = await (supabase
               .from('income_sources') as any)
               .update({ amount: newPrimeActivite, updated_at: new Date().toISOString() })
               .eq('id', existingPrime.id);
+            if (error) throw new Error(`Failed to update Prime d'Activité: ${error.message}`);
           } else {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            await (supabase.from('income_sources') as any).insert({
+            const { error } = await (supabase.from('income_sources') as any).insert({
               user_id: user.id,
               name: 'Prime d\'Activité',
               type: 'prime_activite',
               amount: newPrimeActivite,
               frequency: 'monthly',
+              is_active: true,
             });
+            if (error) throw new Error(`Failed to create Prime d'Activité: ${error.message}`);
           }
         } else if (existingPrime) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          await (supabase
+          const { error } = await (supabase
             .from('income_sources') as any)
             .update({ is_active: false })
             .eq('id', existingPrime.id);
+          if (error) throw new Error(`Failed to deactivate Prime d'Activité: ${error.message}`);
         }
       }
 
       // Update budget allocations for each category
+      console.log('Budget categories to save:', budgetCategories);
       for (const cat of budgetCategories) {
+        console.log('Processing category:', cat.name, 'isSavingsGoal:', cat.isSavingsGoal, 'existingId:', cat.existingId, 'amount:', cat.amount);
         if (cat.isSavingsGoal && cat.existingId) {
           // Update existing savings goal
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          await (supabase
+          const { error } = await (supabase
             .from('savings_goals') as any)
             .update({ monthly_contribution: cat.amount, name: cat.name })
             .eq('id', cat.existingId);
+          if (error) throw new Error(`Failed to update savings goal "${cat.name}": ${error.message}`);
         } else if (cat.isSavingsGoal && !cat.existingId && cat.name.trim()) {
           // Create new savings goal from budget allocation
+          console.log('Creating new savings goal:', cat.name, 'amount:', cat.amount);
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          await (supabase.from('savings_goals') as any).insert({
+          const { data, error } = await (supabase.from('savings_goals') as any).insert({
             user_id: user.id,
             name: cat.name,
             type: 'other',
@@ -439,14 +578,18 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
             current_amount: 0,
             monthly_contribution: cat.amount,
             priority: 10,
-          });
+            is_active: true,
+          }).select();
+          console.log('Savings goal insert result:', data, 'error:', error);
+          if (error) throw new Error(`Failed to create savings goal "${cat.name}": ${error.message}`);
         } else if (!cat.isSavingsGoal && cat.existingId) {
           // Update expense amount
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          await (supabase
+          const { error } = await (supabase
             .from('expenses') as any)
             .update({ amount: cat.amount, name: cat.name })
             .eq('id', cat.existingId);
+          if (error) throw new Error(`Failed to update expense "${cat.name}": ${error.message}`);
         } else if (!cat.isSavingsGoal && !cat.existingId && cat.name.trim()) {
           // Create new expense from budget allocation
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -457,8 +600,9 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
             type: cat.categoryType,
             is_recurring: true,
             frequency: 'monthly',
+            is_active: true,
           });
-          if (error) console.error('Error creating expense:', error);
+          if (error) throw new Error(`Failed to create expense "${cat.name}": ${error.message}`);
         }
       }
 
@@ -466,14 +610,16 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
       for (const deleted of deletedCategories) {
         if (deleted.isSavingsGoal) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          await (supabase.from('savings_goals') as any)
+          const { error } = await (supabase.from('savings_goals') as any)
             .update({ is_active: false })
             .eq('id', deleted.id);
+          if (error) throw new Error(`Failed to delete savings goal: ${error.message}`);
         } else {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          await (supabase.from('expenses') as any)
+          const { error } = await (supabase.from('expenses') as any)
             .update({ is_active: false })
             .eq('id', deleted.id);
+          if (error) throw new Error(`Failed to delete expense: ${error.message}`);
         }
       }
 
@@ -482,16 +628,17 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
 
       // Update profile
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (supabase
+      const { error: profileError } = await (supabase
         .from('profiles') as any)
         .update({ monthly_income_last_updated: new Date().toISOString() })
         .eq('id', user.id);
+      if (profileError) throw new Error(`Failed to update profile: ${profileError.message}`);
 
       if (onUpdate) onUpdate();
       onClose();
     } catch (error) {
       console.error('Error saving income:', error);
-      setUploadError('Failed to save income updates');
+      setSaveError(error instanceof Error ? error.message : 'Failed to save income updates');
     } finally {
       setIsSaving(false);
     }
@@ -568,7 +715,7 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
               {/* Remaining to Allocate */}
               {(() => {
                 const totalIncome = (newSalary || currentIncome.salary || 0) + newApl + newPrimeActivite;
-                const totalAllocated = budgetCategories.reduce((sum, cat) => sum + cat.amount, 0);
+                const totalAllocated = budgetCategories.reduce((sum, cat) => sum + cat.amount, 0) + subscriptionsTotal + billsTotal;
                 const remaining = totalIncome - totalAllocated;
                 const remainingPercentage = totalIncome > 0 ? (remaining / totalIncome) * 100 : 0;
 
@@ -615,80 +762,82 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
                 );
               })()}
 
+              {/* Auto Budget Button */}
+              <div className="flex justify-center">
+                <button
+                  onClick={applyAutoBudget}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors flex items-center gap-2"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clipRule="evenodd" />
+                  </svg>
+                  Auto Budget (50/30/20)
+                </button>
+              </div>
+
               {/* Budget Sections */}
               <>
-                {/* Needs Section */}
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Home className="h-5 w-5 text-black dark:text-white" />
-                      <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
-                        Needs (Essential Expenses)
-                      </h3>
-                      <span className="text-sm font-medium text-slate-900 dark:text-slate-100">
-                        €{budgetCategories
-                          .filter((cat) => cat.type === 'need')
-                          .reduce((sum, cat) => sum + cat.amount, 0)
-                          .toFixed(2)}
-                      </span>
-                      <span className="text-sm font-medium text-slate-600 dark:text-slate-400">
-                        {budgetCategories
-                          .filter((cat) => cat.type === 'need')
-                          .reduce((sum, cat) => sum + cat.percentage, 0)
-                          .toFixed(1)}
-                        %
-                      </span>
+                {/* Subscriptions Total (read-only) */}
+                {subscriptionsTotal > 0 && (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <CreditCard className="h-5 w-5 text-black dark:text-white" />
+                        <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
+                          Subscriptions
+                        </h3>
+                        <span className="text-sm font-medium text-slate-900 dark:text-slate-100">
+                          €{subscriptionsTotal.toFixed(2)}
+                        </span>
+                        <span className="text-sm font-medium text-slate-600 dark:text-slate-400">
+                          {((newSalary || currentIncome.salary || 0) + newApl + newPrimeActivite) > 0
+                            ? ((subscriptionsTotal / ((newSalary || currentIncome.salary || 0) + newApl + newPrimeActivite)) * 100).toFixed(1)
+                            : 0}%
+                        </span>
+                      </div>
+                      <a
+                        href="/budget/expenses"
+                        className="text-sm text-blue-600 dark:text-blue-400 hover:underline font-medium"
+                      >
+                        Manage →
+                      </a>
                     </div>
-                    <button
-                      onClick={() => addBudgetCategory('need')}
-                      className="text-sm text-slate-700 dark:text-slate-300 hover:text-black dark:hover:text-white font-medium"
-                    >
-                      + Add
-                    </button>
+                    <div className="bg-slate-50 dark:bg-slate-800/50 rounded-lg p-3 text-sm text-slate-600 dark:text-slate-400">
+                      Subscriptions are managed in the Expenses page. This total includes all active subscriptions for the current month.
+                    </div>
                   </div>
-                  <div className="space-y-2">
-                    {budgetCategories.filter((cat) => cat.type === 'need').length === 0 ? (
-                      <p className="text-sm text-slate-500 dark:text-slate-400 italic px-3 py-2">
-                        No essential expenses yet. Click "+ Add" to add rent, utilities, insurance, etc.
-                      </p>
-                    ) : (
-                      budgetCategories.map((cat, index) => {
-                        if (cat.type !== 'need') return null;
-                        return (
-                          <div key={index} className="flex items-center gap-3">
-                            <input
-                              type="text"
-                              value={cat.name}
-                              onChange={(e) => updateBudgetCategory(index, { name: e.target.value })}
-                              placeholder="Category name"
-                              className="flex-1 px-3 py-2 border border-slate-300 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 text-sm"
-                            />
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm text-slate-600 dark:text-slate-400">€</span>
-                              <input
-                                type="number"
-                                value={cat.amount.toFixed(0)}
-                                onChange={(e) =>
-                                  updateBudgetCategory(index, { amount: parseFloat(e.target.value) || 0 })
-                                }
-                                className="w-24 px-3 py-2 border border-slate-300 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 text-sm"
-                              />
-                              <span className="text-sm text-slate-600 dark:text-slate-400 w-12">
-                                {cat.percentage.toFixed(1)}%
-                              </span>
-                            </div>
-                            <button
-                              onClick={() => removeBudgetCategory(index)}
-                              className="text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 text-sm"
-                            >
-                              ✕
-                            </button>
-                          </div>
-                        );
-                      })
-                    )}
+                )}
+
+                {/* Bills Total (read-only) */}
+                {billsTotal > 0 && (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Home className="h-5 w-5 text-black dark:text-white" />
+                        <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
+                          Bills
+                        </h3>
+                        <span className="text-sm font-medium text-slate-900 dark:text-slate-100">
+                          €{billsTotal.toFixed(2)}
+                        </span>
+                        <span className="text-sm font-medium text-slate-600 dark:text-slate-400">
+                          {((newSalary || currentIncome.salary || 0) + newApl + newPrimeActivite) > 0
+                            ? ((billsTotal / ((newSalary || currentIncome.salary || 0) + newApl + newPrimeActivite)) * 100).toFixed(1)
+                            : 0}%
+                        </span>
+                      </div>
+                      <a
+                        href="/budget/bills"
+                        className="text-sm text-blue-600 dark:text-blue-400 hover:underline font-medium"
+                      >
+                        Manage →
+                      </a>
+                    </div>
+                    <div className="bg-slate-50 dark:bg-slate-800/50 rounded-lg p-3 text-sm text-slate-600 dark:text-slate-400">
+                      Bills (rent, utilities, insurance) are managed in the Bills page.
+                    </div>
                   </div>
-                </div>
+                )}
 
                 {/* Wants Section */}
                 <div className="space-y-3">
@@ -1020,7 +1169,13 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-slate-200 dark:border-slate-700 flex justify-between gap-3">
+        <div className="px-6 py-4 border-t border-slate-200 dark:border-slate-700 space-y-3">
+          {saveError && (
+            <div className="bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded-lg p-3">
+              <p className="text-red-800 dark:text-red-200 text-sm">{saveError}</p>
+            </div>
+          )}
+          <div className="flex justify-between gap-3">
           <button
             onClick={onClose}
             disabled={isSaving}
@@ -1052,6 +1207,7 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
             >
               {isSaving ? 'Saving...' : 'Save Changes'}
             </button>
+          </div>
           </div>
         </div>
       </div>

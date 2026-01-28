@@ -10,12 +10,44 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Gavel, Loader2, CheckCircle2, XCircle, Clock, AlertCircle, Trash2, RotateCcw } from 'lucide-react';
+import { Progress } from '@/components/ui/progress';
+import { Gavel, Loader2, CheckCircle2, XCircle, Clock, AlertCircle, Trash2, RotateCcw, TrendingUp, Wallet, PiggyBank, AlertTriangle } from 'lucide-react';
 import type { Tables } from '@/types/database';
 
 type PurchaseRequest = Tables<'purchase_requests'>;
 type Deliberation = Tables<'deliberations'>;
 type MemberResult = Tables<'member_results'>;
+
+// Extended financial context type from the API
+interface FinancialContextWithAnalysis {
+  monthlyIncome: number;
+  monthlyExpenses: number;
+  monthlyBills: number;
+  discretionaryBudget: number;
+  totalSavings: number;
+  analysis?: {
+    health: {
+      score: number;
+      riskLevel: string;
+      savingsRate: number;
+      emergencyFundMonths: number;
+      recommendations: string[];
+    };
+    affordability: {
+      recommendation: string;
+      percentageOfMonthlyIncome: number;
+      percentageOfDisposableIncome: number;
+      percentageOfSavings: number;
+    };
+  };
+  insights?: {
+    budgetAssessment: string;
+    affordabilityVerdict: string;
+    keyFinancialConcerns: string[];
+    financialRecommendation: string;
+    riskFactors: string[];
+  };
+}
 
 const categories = [
   'Electronics',
@@ -36,6 +68,39 @@ const urgencyLevels = [
   { value: 'medium', label: 'Medium - Would like soon' },
   { value: 'high', label: 'High - Need it now' },
 ];
+
+function getAffordabilityColor(verdict: string): string {
+  switch (verdict) {
+    case 'easily_affordable':
+      return 'text-green-600 bg-green-100';
+    case 'affordable':
+      return 'text-green-600 bg-green-50';
+    case 'stretch':
+      return 'text-yellow-600 bg-yellow-100';
+    case 'risky':
+    case 'not_recommended':
+      return 'text-orange-600 bg-orange-100';
+    case 'unaffordable':
+      return 'text-red-600 bg-red-100';
+    default:
+      return 'text-gray-600 bg-gray-100';
+  }
+}
+
+function getRiskColor(riskLevel: string): string {
+  switch (riskLevel) {
+    case 'low':
+      return 'text-green-600';
+    case 'moderate':
+      return 'text-yellow-600';
+    case 'high':
+      return 'text-orange-600';
+    case 'critical':
+      return 'text-red-600';
+    default:
+      return 'text-gray-600';
+  }
+}
 
 export default function DeliberatePage() {
   const [recentRequests, setRecentRequests] = useState<PurchaseRequest[]>([]);
@@ -217,6 +282,9 @@ export default function DeliberatePage() {
 
     fetchRecentRequests();
   }
+
+  // Extract financial context from deliberation
+  const financialContext = deliberation?.financial_context as FinancialContextWithAnalysis | null;
 
   return (
     <div className="space-y-6">
@@ -430,6 +498,96 @@ export default function DeliberatePage() {
                   {deliberation.is_unanimous && <span className="font-medium">Unanimous</span>}
                 </div>
               </div>
+
+              {/* Financial Analysis Section */}
+              {financialContext?.analysis && financialContext?.insights && (
+                <div className="space-y-4">
+                  <h3 className="font-semibold flex items-center gap-2">
+                    <TrendingUp className="h-4 w-4" />
+                    Financial Analysis
+                  </h3>
+
+                  {/* Affordability Badge */}
+                  <div className="flex items-center gap-3">
+                    <Badge className={getAffordabilityColor(financialContext.insights.affordabilityVerdict)}>
+                      {financialContext.insights.affordabilityVerdict.replace('_', ' ')}
+                    </Badge>
+                    <span className="text-sm text-muted-foreground">
+                      {financialContext.insights.budgetAssessment}
+                    </span>
+                  </div>
+
+                  {/* Health Score */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="p-3 border rounded-lg">
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground mb-1">
+                        <TrendingUp className="h-3 w-3" />
+                        Health Score
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xl font-bold">{financialContext.analysis.health.score}</span>
+                        <span className="text-sm text-muted-foreground">/100</span>
+                      </div>
+                      <Progress value={financialContext.analysis.health.score} className="h-1.5 mt-1" />
+                    </div>
+
+                    <div className="p-3 border rounded-lg">
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground mb-1">
+                        <Wallet className="h-3 w-3" />
+                        Budget Impact
+                      </div>
+                      <div className="text-xl font-bold">
+                        {financialContext.analysis.affordability.percentageOfDisposableIncome.toFixed(1)}%
+                      </div>
+                      <span className="text-xs text-muted-foreground">of disposable income</span>
+                    </div>
+
+                    <div className="p-3 border rounded-lg">
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground mb-1">
+                        <PiggyBank className="h-3 w-3" />
+                        Savings Impact
+                      </div>
+                      <div className="text-xl font-bold">
+                        {financialContext.analysis.affordability.percentageOfSavings.toFixed(1)}%
+                      </div>
+                      <span className="text-xs text-muted-foreground">of total savings</span>
+                    </div>
+
+                    <div className="p-3 border rounded-lg">
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground mb-1">
+                        <AlertTriangle className="h-3 w-3" />
+                        Risk Level
+                      </div>
+                      <div className={`text-xl font-bold capitalize ${getRiskColor(financialContext.analysis.health.riskLevel)}`}>
+                        {financialContext.analysis.health.riskLevel}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Key Concerns */}
+                  {financialContext.insights.keyFinancialConcerns.length > 0 && (
+                    <div className="p-3 border rounded-lg bg-yellow-50 border-yellow-200">
+                      <div className="flex items-center gap-2 text-sm font-medium text-yellow-800 mb-2">
+                        <AlertTriangle className="h-4 w-4" />
+                        Key Concerns
+                      </div>
+                      <ul className="text-sm text-yellow-700 space-y-1">
+                        {financialContext.insights.keyFinancialConcerns.map((concern, i) => (
+                          <li key={i}>• {concern}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* Recommendation */}
+                  <div className="p-3 border rounded-lg">
+                    <div className="text-sm font-medium mb-1">Financial Recommendation</div>
+                    <p className="text-sm text-muted-foreground">
+                      {financialContext.insights.financialRecommendation}
+                    </p>
+                  </div>
+                </div>
+              )}
 
               {/* Individual Votes */}
               <div>

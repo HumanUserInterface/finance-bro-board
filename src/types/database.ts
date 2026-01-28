@@ -130,6 +130,7 @@ export interface Database {
           end_date: string | null;
           notes: string | null;
           is_active: boolean;
+          cancelled_at: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -147,6 +148,7 @@ export interface Database {
           end_date?: string | null;
           notes?: string | null;
           is_active?: boolean;
+          cancelled_at?: string | null;
         };
         Update: {
           category_id?: string | null;
@@ -160,6 +162,37 @@ export interface Database {
           end_date?: string | null;
           notes?: string | null;
           is_active?: boolean;
+          cancelled_at?: string | null;
+          updated_at?: string;
+        };
+      };
+      subscription_months: {
+        Row: {
+          id: string;
+          user_id: string;
+          expense_id: string;
+          month_date: string;
+          status: 'active' | 'paused' | 'cancelled';
+          amount_override: number | null;
+          notes: string | null;
+          copied_from_month: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          expense_id: string;
+          month_date: string;
+          status?: 'active' | 'paused' | 'cancelled';
+          amount_override?: number | null;
+          notes?: string | null;
+          copied_from_month?: string | null;
+        };
+        Update: {
+          status?: 'active' | 'paused' | 'cancelled';
+          amount_override?: number | null;
+          notes?: string | null;
           updated_at?: string;
         };
       };

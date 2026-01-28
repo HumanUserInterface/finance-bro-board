@@ -15,6 +15,7 @@ import {
   Upload,
   ArrowLeftRight,
   GitBranch,
+  HeartPulse,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -34,6 +35,7 @@ const navigation: NavSection[] = [
     title: 'MY BUDGET',
     items: [
       { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
+      { name: 'Financial Health', href: '/financial-health', icon: HeartPulse },
       { name: 'Income', href: '/budget/income', icon: Wallet },
       { name: 'Subscriptions', href: '/budget/expenses', icon: Receipt },
       { name: 'Bills', href: '/budget/bills', icon: CreditCard },

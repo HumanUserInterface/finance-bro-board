@@ -71,11 +71,12 @@ export default function DashboardPage() {
     };
 
     // Fetch all financial data in parallel
-    const [incomeRes, expensesRes, billsRes, goalsRes, purchasesRes, deliberationsRes] = await Promise.all([
+    const [incomeRes, expensesRes, billsRes, goalsRes, accountsRes, purchasesRes, deliberationsRes] = await Promise.all([
       supabase.from('income_sources').select('*').eq('is_active', true),
       supabase.from('expenses').select('*').eq('is_active', true),
       supabase.from('bills').select('*').eq('is_active', true),
       supabase.from('savings_goals').select('*').eq('is_active', true).order('priority'),
+      supabase.from('savings_accounts').select('*').eq('is_active', true),
       supabase.from('purchase_requests').select('*').order('created_at', { ascending: false }).limit(5),
       supabase.from('deliberations').select('*').order('created_at', { ascending: false }).limit(5),
     ]);
@@ -84,6 +85,7 @@ export default function DashboardPage() {
     const expenses = (expensesRes.data || []) as Tables<'expenses'>[];
     const bills = (billsRes.data || []) as Tables<'bills'>[];
     const goals = (goalsRes.data || []) as SavingsGoal[];
+    const accounts = (accountsRes.data || []) as Tables<'savings_accounts'>[];
     const purchases = (purchasesRes.data || []) as PurchaseRequest[];
     const deliberations = (deliberationsRes.data || []) as Deliberation[];
 
@@ -106,7 +108,10 @@ export default function DashboardPage() {
     }, 0);
 
     const discretionaryBudget = monthlyIncome - monthlyExpenses - monthlyBills;
-    const totalSavings = goals.reduce((total, goal) => total + goal.current_amount, 0);
+    // Total savings = savings goals current amounts + savings accounts balances
+    const savingsFromGoals = goals.reduce((total, goal) => total + goal.current_amount, 0);
+    const savingsFromAccounts = accounts.reduce((total, acc) => total + acc.balance, 0);
+    const totalSavings = savingsFromGoals + savingsFromAccounts;
 
     setStats({
       monthlyIncome,
