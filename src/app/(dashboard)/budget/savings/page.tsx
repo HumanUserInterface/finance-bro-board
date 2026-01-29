@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { Plus, Pencil, Trash2, PiggyBank, Building2, TrendingUp, Landmark, Bitcoin, Banknote, ArrowDownCircle, CheckCircle2, X } from 'lucide-react';
+import { Plus, Pencil, Trash2, PiggyBank, Building2, TrendingUp, Landmark, Bitcoin, Banknote, ArrowDownCircle, ArrowUpCircle, CheckCircle2, X } from 'lucide-react';
 import type { Tables } from '@/types/database';
 
 type SavingsAccount = Tables<'savings_accounts'>;
@@ -31,8 +31,10 @@ export default function SavingsPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [confirmDialogOpen, setConfirmDialogOpen] = useState(false);
   const [withdrawDialogOpen, setWithdrawDialogOpen] = useState(false);
+  const [depositDialogOpen, setDepositDialogOpen] = useState(false);
   const [editingAccount, setEditingAccount] = useState<SavingsAccount | null>(null);
   const [selectedAccountForWithdraw, setSelectedAccountForWithdraw] = useState<SavingsAccount | null>(null);
+  const [selectedAccountForDeposit, setSelectedAccountForDeposit] = useState<SavingsAccount | null>(null);
   const [isConfirming, setIsConfirming] = useState(false);
   const supabase = createClient();
 
@@ -48,8 +50,11 @@ export default function SavingsPage() {
   // Withdraw state
   const [withdrawAmount, setWithdrawAmount] = useState('');
 
-  // Track all withdrawals per account (accountName -> array of transactions)
-  const [withdrawalsByAccount, setWithdrawalsByAccount] = useState<Record<string, { id: string; amount: number; date: string }[]>>({});
+  // Deposit state
+  const [depositAmount, setDepositAmount] = useState('');
+
+  // Track all withdrawals and deposits per account (accountName -> array of transactions)
+  const [activityByAccount, setActivityByAccount] = useState<Record<string, { id: string; amount: number; date: string; type: 'withdrawal' | 'deposit' }[]>>({});
 
   // Track if savings already confirmed this month
   const [confirmedThisMonth, setConfirmedThisMonth] = useState(false);
@@ -57,7 +62,7 @@ export default function SavingsPage() {
   useEffect(() => {
     fetchAccounts();
     fetchSavingsGoals();
-    fetchLastWithdrawals();
+    fetchRecentActivity();
     checkIfConfirmedThisMonth();
   }, []);
 
@@ -86,31 +91,57 @@ export default function SavingsPage() {
     }
   }
 
-  async function fetchLastWithdrawals() {
-    // Fetch recent withdrawal transactions (category starts with 'Savings Withdrawal:')
-    const { data, error } = await supabase
+  async function fetchRecentActivity() {
+    // Fetch recent withdrawal and deposit transactions
+    const { data: withdrawals } = await supabase
       .from('transactions')
       .select('*')
       .like('category', 'Savings Withdrawal:%')
       .order('date', { ascending: false });
 
-    if (!error && data) {
-      // Group all withdrawals by account name
-      const grouped: Record<string, { id: string; amount: number; date: string }[]> = {};
-      data.forEach((tx: any) => {
-        // Extract account name from category "Savings Withdrawal: AccountName"
-        const accountName = tx.category.replace('Savings Withdrawal: ', '');
-        if (!grouped[accountName]) {
-          grouped[accountName] = [];
-        }
-        grouped[accountName].push({
-          id: tx.id,
-          amount: tx.amount,
-          date: tx.date,
-        });
+    const { data: deposits } = await supabase
+      .from('transactions')
+      .select('*')
+      .like('category', 'Savings Deposit:%')
+      .order('date', { ascending: false });
+
+    // Group all activity by account name
+    const grouped: Record<string, { id: string; amount: number; date: string; type: 'withdrawal' | 'deposit' }[]> = {};
+
+    // Add withdrawals
+    (withdrawals || []).forEach((tx: any) => {
+      const accountName = tx.category.replace('Savings Withdrawal: ', '');
+      if (!grouped[accountName]) {
+        grouped[accountName] = [];
+      }
+      grouped[accountName].push({
+        id: tx.id,
+        amount: tx.amount,
+        date: tx.date,
+        type: 'withdrawal',
       });
-      setWithdrawalsByAccount(grouped);
-    }
+    });
+
+    // Add deposits
+    (deposits || []).forEach((tx: any) => {
+      const accountName = tx.category.replace('Savings Deposit: ', '');
+      if (!grouped[accountName]) {
+        grouped[accountName] = [];
+      }
+      grouped[accountName].push({
+        id: tx.id,
+        amount: tx.amount,
+        date: tx.date,
+        type: 'deposit',
+      });
+    });
+
+    // Sort each account's activity by date descending
+    Object.keys(grouped).forEach((accountName) => {
+      grouped[accountName].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    });
+
+    setActivityByAccount(grouped);
   }
 
   async function checkIfConfirmedThisMonth() {
@@ -259,7 +290,41 @@ export default function SavingsPage() {
     setWithdrawDialogOpen(false);
     setSelectedAccountForWithdraw(null);
     fetchAccounts();
-    fetchLastWithdrawals();
+    fetchRecentActivity();
+  }
+
+  async function handleDeposit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!selectedAccountForDeposit) return;
+
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
+    const amount = parseFloat(depositAmount);
+    const newBalance = selectedAccountForDeposit.balance + amount;
+
+    // Update account balance
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (supabase.from('savings_accounts') as any)
+      .update({ balance: newBalance, updated_at: new Date().toISOString() })
+      .eq('id', selectedAccountForDeposit.id);
+
+    // Create a transaction record for the deposit
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (supabase.from('transactions') as any).insert({
+      user_id: user.id,
+      description: `Deposit to ${selectedAccountForDeposit.name}`,
+      amount: amount,
+      type: 'transfer',
+      category: `Savings Deposit: ${selectedAccountForDeposit.name}`,
+      date: new Date().toISOString().split('T')[0],
+    });
+
+    setDepositAmount('');
+    setDepositDialogOpen(false);
+    setSelectedAccountForDeposit(null);
+    fetchAccounts();
+    fetchRecentActivity();
   }
 
   async function handleDelete(id: string) {
@@ -270,24 +335,29 @@ export default function SavingsPage() {
     fetchAccounts();
   }
 
-  async function handleDeleteWithdrawal(transactionId: string, accountName: string, amount: number) {
+  async function handleDeleteActivity(transactionId: string, accountName: string, amount: number, type: 'withdrawal' | 'deposit') {
     // Delete the transaction
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (supabase.from('transactions') as any)
       .delete()
       .eq('id', transactionId);
 
-    // Refund the amount back to the account
+    // Reverse the transaction effect on the account
     const account = accounts.find((a) => a.name === accountName);
     if (account) {
+      // For withdrawal: refund (add back)
+      // For deposit: remove (subtract)
+      const adjustedBalance = type === 'withdrawal'
+        ? account.balance + amount
+        : Math.max(0, account.balance - amount);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       await (supabase.from('savings_accounts') as any)
-        .update({ balance: account.balance + amount, updated_at: new Date().toISOString() })
+        .update({ balance: adjustedBalance, updated_at: new Date().toISOString() })
         .eq('id', account.id);
     }
 
     fetchAccounts();
-    fetchLastWithdrawals();
+    fetchRecentActivity();
   }
 
   function openEditDialog(account: SavingsAccount) {
@@ -302,6 +372,11 @@ export default function SavingsPage() {
   function openWithdrawDialog(account: SavingsAccount) {
     setSelectedAccountForWithdraw(account);
     setWithdrawDialogOpen(true);
+  }
+
+  function openDepositDialog(account: SavingsAccount) {
+    setSelectedAccountForDeposit(account);
+    setDepositDialogOpen(true);
   }
 
   function resetForm() {
@@ -521,6 +596,41 @@ export default function SavingsPage() {
         </DialogContent>
       </Dialog>
 
+      {/* Deposit Dialog */}
+      <Dialog open={depositDialogOpen} onOpenChange={setDepositDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add Funds</DialogTitle>
+            <DialogDescription>
+              Deposit to &quot;{selectedAccountForDeposit?.name}&quot;
+              {selectedAccountForDeposit && (
+                <span className="block mt-1">
+                  Current balance: €{selectedAccountForDeposit.balance.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                </span>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleDeposit} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="depositAmount">Amount (€)</Label>
+              <Input
+                id="depositAmount"
+                type="number"
+                step="0.01"
+                min="0.01"
+                placeholder="100"
+                value={depositAmount}
+                onChange={(e) => setDepositAmount(e.target.value)}
+                required
+              />
+            </div>
+            <Button type="submit" className="w-full bg-green-600 hover:bg-green-700">
+              Add Funds
+            </Button>
+          </form>
+        </DialogContent>
+      </Dialog>
+
       {/* Budget Info Card - only show if not confirmed this month */}
       {hasGoalsWithContributions && !confirmedThisMonth && (
         <Card className="border-green-200 dark:border-green-800 bg-green-50/50 dark:bg-green-950/50">
@@ -577,7 +687,7 @@ export default function SavingsPage() {
       ) : (
         <div className="grid gap-4">
           {accounts.map((account) => {
-            const accountWithdrawals = withdrawalsByAccount[account.name] || [];
+            const accountActivity = activityByAccount[account.name] || [];
             return (
               <Card key={account.id}>
                 <CardContent className="py-4">
@@ -604,6 +714,14 @@ export default function SavingsPage() {
                         <Button
                           variant="ghost"
                           size="icon"
+                          onClick={() => openDepositDialog(account)}
+                          title="Deposit"
+                        >
+                          <ArrowUpCircle className="h-4 w-4 text-green-600" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
                           onClick={() => openWithdrawDialog(account)}
                           disabled={account.balance <= 0}
                           title="Withdraw"
@@ -619,29 +737,31 @@ export default function SavingsPage() {
                       </div>
                     </div>
                   </div>
-                  {accountWithdrawals.length > 0 && (
+                  {accountActivity.length > 0 && (
                     <div className="mt-3 pt-3 border-t border-slate-200 dark:border-slate-700">
                       <p className="text-xs font-medium text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-2">Recent Activity</p>
                       <div className="space-y-1">
-                        {accountWithdrawals.slice(0, 5).map((withdrawal) => (
-                          <div key={withdrawal.id} className="bg-slate-50 dark:bg-slate-800/50 rounded-md px-3 py-2">
+                        {accountActivity.slice(0, 5).map((activity) => (
+                          <div key={activity.id} className="bg-slate-50 dark:bg-slate-800/50 rounded-md px-3 py-2">
                             <div className="flex items-center justify-between text-sm">
                               <div className="flex items-center gap-3">
                                 <span className="text-slate-400 dark:text-slate-500 font-mono text-xs">
-                                  {new Date(withdrawal.date).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit' })}
+                                  {new Date(activity.date).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit' })}
                                 </span>
-                                <span className="text-slate-600 dark:text-slate-300">Withdrawal</span>
+                                <span className="text-slate-600 dark:text-slate-300">
+                                  {activity.type === 'deposit' ? 'Deposit' : 'Withdrawal'}
+                                </span>
                               </div>
                               <div className="flex items-center gap-2">
-                                <span className="font-mono font-medium text-red-600 dark:text-red-400">
-                                  -€{withdrawal.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                                <span className={`font-mono font-medium ${activity.type === 'deposit' ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                                  {activity.type === 'deposit' ? '+' : '-'}€{activity.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                                 </span>
                                 <Button
                                   variant="ghost"
                                   size="icon"
                                   className="h-6 w-6"
-                                  onClick={() => handleDeleteWithdrawal(withdrawal.id, account.name, withdrawal.amount)}
-                                  title="Delete withdrawal (refunds amount)"
+                                  onClick={() => handleDeleteActivity(activity.id, account.name, activity.amount, activity.type)}
+                                  title={activity.type === 'deposit' ? 'Delete deposit (removes amount)' : 'Delete withdrawal (refunds amount)'}
                                 >
                                   <X className="h-3 w-3 text-slate-400 hover:text-red-500" />
                                 </Button>
