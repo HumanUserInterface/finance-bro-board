@@ -197,22 +197,7 @@ export default function DeliberatePage() {
       return;
     }
 
-    // Trigger deliberation API
-    try {
-      const response = await fetch('/api/deliberate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ purchaseId: request.id }),
-      });
-
-      if (!response.ok) {
-        console.error('Deliberation failed');
-      }
-    } catch (err) {
-      console.error('Error triggering deliberation:', err);
-    }
-
-    // Reset form and refresh
+    // Reset form and refresh immediately so request appears as "pending"
     setItem('');
     setPrice('');
     setCategory('');
@@ -221,6 +206,24 @@ export default function DeliberatePage() {
     setContext('');
     setSubmitting(false);
     fetchRecentRequests();
+
+    // Trigger deliberation API in background (don't await)
+    fetch('/api/deliberate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ purchaseId: request.id }),
+    })
+      .then((response) => {
+        if (!response.ok) {
+          console.error('Deliberation failed');
+        }
+        // Refresh to show updated status
+        fetchRecentRequests();
+      })
+      .catch((err) => {
+        console.error('Error triggering deliberation:', err);
+        fetchRecentRequests();
+      });
   }
 
   function getStatusBadge(status: PurchaseRequest['status'], clickable = false) {
