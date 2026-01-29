@@ -69,6 +69,15 @@ const urgencyLevels = [
   { value: 'high', label: 'High - Need it now' },
 ];
 
+const currencySymbols: Record<string, string> = {
+  USD: '$',
+  EUR: '€',
+  GBP: '£',
+  JPY: '¥',
+  CAD: 'CA$',
+  AUD: 'A$',
+};
+
 function getAffordabilityColor(verdict: string): string {
   switch (verdict) {
     case 'easily_affordable':
@@ -111,6 +120,7 @@ export default function DeliberatePage() {
   const [deliberation, setDeliberation] = useState<Deliberation | null>(null);
   const [memberResults, setMemberResults] = useState<MemberResult[]>([]);
   const [loadingDetails, setLoadingDetails] = useState(false);
+  const [currencySymbol, setCurrencySymbol] = useState('$');
   const supabase = createClient();
 
   // Form state
@@ -123,7 +133,24 @@ export default function DeliberatePage() {
 
   useEffect(() => {
     fetchRecentRequests();
+    fetchUserCurrency();
   }, []);
+
+  async function fetchUserCurrency() {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data } = await (supabase
+      .from('profiles')
+      .select('currency')
+      .eq('id', user.id)
+      .single() as any);
+
+    if (data?.currency) {
+      setCurrencySymbol(currencySymbols[data.currency] || '$');
+    }
+  }
 
   async function fetchRecentRequests() {
     const { data, error } = await supabase
@@ -322,7 +349,7 @@ export default function DeliberatePage() {
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="price">Price ($)</Label>
+                  <Label htmlFor="price">Price ({currencySymbol})</Label>
                   <Input
                     id="price"
                     type="number"
@@ -431,7 +458,7 @@ export default function DeliberatePage() {
                     >
                       <p className="font-medium">{request.item}</p>
                       <p className="text-sm text-muted-foreground">
-                        ${request.price.toLocaleString('en-US', { minimumFractionDigits: 2 })} &bull; {request.category}
+                        {currencySymbol}{request.price.toLocaleString('en-US', { minimumFractionDigits: 2 })} &bull; {request.category}
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
@@ -474,7 +501,7 @@ export default function DeliberatePage() {
               {selectedRequest && getStatusBadge(selectedRequest.status)}
             </DialogTitle>
             <DialogDescription>
-              ${selectedRequest?.price.toLocaleString('en-US', { minimumFractionDigits: 2 })} &bull; {selectedRequest?.category}
+              {currencySymbol}{selectedRequest?.price.toLocaleString('en-US', { minimumFractionDigits: 2 })} &bull; {selectedRequest?.category}
             </DialogDescription>
           </DialogHeader>
 
