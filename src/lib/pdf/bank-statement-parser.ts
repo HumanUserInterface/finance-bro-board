@@ -1,12 +1,4 @@
-import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
-import path from 'path';
-
-// Set worker path for server-side
-const workerPath = path.join(
-  process.cwd(),
-  'node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs'
-);
-pdfjs.GlobalWorkerOptions.workerSrc = workerPath;
+import PDFParser from 'pdf2json';
 
 export interface ParsedTransaction {
   date: string;
@@ -55,80 +47,81 @@ export interface ParsedBankStatement {
  * Parses a bank statement PDF (N26 format) and extracts transactions
  */
 export async function parseBankStatement(buffer: Buffer): Promise<ParsedBankStatement> {
-  console.log('[BANK-PARSER] Starting PDF parsing with pdfjs-dist');
+  return new Promise((resolve, reject) => {
+    console.log('[BANK-PARSER] Starting PDF parsing with pdf2json');
 
-  // Convert Buffer to Uint8Array
-  const data = new Uint8Array(buffer);
+    const pdfParser = new PDFParser();
 
-  // Load PDF with worker disabled
-  const loadingTask = pdfjs.getDocument({
-    data,
-    useWorkerFetch: false,
-    isEvalSupported: false,
-    useSystemFonts: true,
-  });
-  const doc = await loadingTask.promise;
+    pdfParser.on('pdfParser_dataReady', (pdfData) => {
+      try {
+        // Extract text from each page
+        const pageTexts: string[] = [];
 
-  console.log('[BANK-PARSER] PDF loaded, pages:', doc.numPages);
+        if (pdfData.Pages) {
+          console.log('[BANK-PARSER] PDF loaded, pages:', pdfData.Pages.length);
 
-  // Extract text from each page
-  const pageTexts: string[] = [];
-  for (let i = 1; i <= doc.numPages; i++) {
-    const page = await doc.getPage(i);
-    const textContent = await page.getTextContent();
+          for (const page of pdfData.Pages) {
+            let pageText = '';
+            if (page.Texts) {
+              // Sort texts by Y position then X position
+              const sortedTexts = [...page.Texts].sort((a, b) => {
+                const yDiff = (a.y || 0) - (b.y || 0);
+                if (Math.abs(yDiff) > 0.5) return yDiff;
+                return (a.x || 0) - (b.x || 0);
+              });
 
-    // Get text items and sort by position
-    const items = textContent.items as Array<{ str: string; transform: number[] }>;
+              let lastY = -1;
+              for (const text of sortedTexts) {
+                if (text.R) {
+                  // Add newline when Y position changes significantly
+                  if (lastY !== -1 && Math.abs((text.y || 0) - lastY) > 0.5) {
+                    pageText += '\n';
+                  }
+                  lastY = text.y || 0;
 
-    // Sort by y (top to bottom) then x (left to right)
-    items.sort((a, b) => {
-      const yDiff = b.transform[5] - a.transform[5];
-      if (Math.abs(yDiff) > 5) return yDiff;
-      return a.transform[4] - b.transform[4];
+                  for (const run of text.R) {
+                    if (run.T) {
+                      try {
+                        pageText += decodeURIComponent(run.T) + ' ';
+                      } catch {
+                        pageText += run.T + ' ';
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            pageTexts.push(pageText);
+          }
+        }
+
+        const fullText = pageTexts.join('\n---PAGE---\n');
+        console.log('[BANK-PARSER] Extracted text length:', fullText.length);
+
+        const result = parseN26Statement(fullText, pageTexts);
+        result.rawText = fullText;
+
+        console.log('[BANK-PARSER] Parsing complete:', {
+          transactionCount: result.transactions.length,
+          totalIncome: result.summary.totalIncome,
+          totalExpenses: result.summary.totalExpenses,
+          confidence: result.confidence,
+        });
+
+        resolve(result);
+      } catch (error) {
+        console.error('[BANK-PARSER] Error processing PDF:', error);
+        reject(new Error('Failed to process bank statement PDF'));
+      }
     });
 
-    // Group into lines and join text
-    let currentY = items.length > 0 ? items[0].transform[5] : 0;
-    let currentLine: string[] = [];
-    const lines: string[] = [];
+    pdfParser.on('pdfParser_dataError', (error) => {
+      console.error('[BANK-PARSER] PDF parsing error:', error);
+      reject(new Error('Failed to parse PDF document'));
+    });
 
-    for (const item of items) {
-      const y = item.transform[5];
-      if (Math.abs(y - currentY) > 5) {
-        if (currentLine.length > 0) {
-          lines.push(currentLine.join(' '));
-        }
-        currentLine = [];
-        currentY = y;
-      }
-      if (item.str.trim()) {
-        currentLine.push(item.str.trim());
-      }
-    }
-    if (currentLine.length > 0) {
-      lines.push(currentLine.join(' '));
-    }
-
-    pageTexts.push(lines.join('\n'));
-  }
-
-  const fullText = pageTexts.join('\n---PAGE---\n');
-  console.log('[BANK-PARSER] Extracted text length:', fullText.length);
-
-  const result = parseN26Statement(fullText, pageTexts);
-  result.rawText = fullText;
-
-  console.log('[BANK-PARSER] Parsing complete:', {
-    transactionCount: result.transactions.length,
-    totalIncome: result.summary.totalIncome,
-    totalExpenses: result.summary.totalExpenses,
-    confidence: result.confidence,
+    pdfParser.parseBuffer(buffer);
   });
-
-  // Clean up
-  await doc.destroy();
-
-  return result;
 }
 
 /**
@@ -166,21 +159,37 @@ function parseN26Statement(fullText: string, pageTexts: string[]): ParsedBankSta
     }
   }
 
-  console.log('[BANK-PARSER] Found', transactionPages.length, 'main account pages');
+  console.log('[BANK-PARSER] Found', transactionPages.length, 'main account pages out of', pageTexts.length, 'total pages');
+
+  // Log first page sample for debugging
+  if (transactionPages.length > 0) {
+    const sampleLines = transactionPages[0].split('\n').slice(0, 30);
+    console.log('[BANK-PARSER] Sample from first transaction page:', sampleLines);
+  }
 
   // Process each transaction page
-  for (const pageText of transactionPages) {
+  let totalMatchedLines = 0;
+  for (let pageIdx = 0; pageIdx < transactionPages.length; pageIdx++) {
+    const pageText = transactionPages[pageIdx];
     const lines = pageText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
 
     // pdfjs-dist format: "DESCRIPTION DD.MM.YYYY [+/-]XX,XX€"
     // e.g., "CAGNARD 01.12.2025 -9,00€" or "De Plaisirs 01.12.2025 +40,00€"
-    const transactionPattern = /^(.+?)\s+(\d{2})\.(\d{2})\.(\d{4})\s+([+-])?(\d{1,3}(?:\.\d{3})*,\d{2})€$/;
+    // Made more flexible: optional space before €, € optional, handles space in thousands
+    const transactionPattern = /^(.+?)\s+(\d{2})\.(\d{2})\.(\d{4})\s+([+-])?(\d{1,3}(?:[\.\s]\d{3})*,\d{2})\s*€?\s*$/;
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
 
       const match = line.match(transactionPattern);
-      if (!match) continue;
+      if (!match) {
+        // Log lines that look like they might be transactions (contain € or date pattern)
+        if (line.includes('€') || line.match(/\d{2}\.\d{2}\.\d{4}/)) {
+          console.log('[BANK-PARSER] Unmatched line with € or date:', line);
+        }
+        continue;
+      }
+      totalMatchedLines++;
 
       const description = match[1].trim();
       const day = match[2];
@@ -189,7 +198,8 @@ function parseN26Statement(fullText: string, pageTexts: string[]): ParsedBankSta
       const sign = match[5] || '-';
       const amountStr = match[6];
 
-      const amount = parseFloat(amountStr.replace(/\./g, '').replace(',', '.'));
+      // Handle both dot and space as thousand separators
+      const amount = parseFloat(amountStr.replace(/[\.\s]/g, '').replace(',', '.'));
       if (isNaN(amount) || amount === 0) continue;
 
       const transactionDate = `${year}-${month}-${day}`;
@@ -252,12 +262,26 @@ function parseN26Statement(fullText: string, pageTexts: string[]): ParsedBankSta
     }
   }
 
+  console.log('[BANK-PARSER] Total matched transaction lines:', totalMatchedLines);
+  console.log('[BANK-PARSER] Transactions before dedup:', transactions.length);
+
   // Remove duplicates (same date + amount + description)
   const uniqueTransactions = transactions.filter((tx, index, self) =>
     index === self.findIndex((t) =>
       t.date === tx.date && t.amount === tx.amount && t.description === tx.description
     )
   );
+
+  console.log('[BANK-PARSER] Transactions after dedup:', uniqueTransactions.length);
+
+  // Log first 5 transactions for debugging
+  console.log('[BANK-PARSER] First 5 transactions:', uniqueTransactions.slice(0, 5).map(t => ({
+    date: t.date,
+    description: t.description.substring(0, 30),
+    amount: t.amount,
+    type: t.type,
+    isInternal: t.isInternalTransfer
+  })));
 
   // Sort by date descending
   uniqueTransactions.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
@@ -317,6 +341,15 @@ function parseN26Statement(fullText: string, pageTexts: string[]): ParsedBankSta
   // Convert account map to sorted array
   const internalAccounts = Array.from(accountMap.values())
     .sort((a, b) => b.transactionCount - a.transactionCount);
+
+  console.log('[BANK-PARSER] Final totals:', {
+    totalIncome: totalIncome.toFixed(2),
+    totalExpenses: totalExpenses.toFixed(2),
+    externalIncome: externalIncome.toFixed(2),
+    externalExpenses: externalExpenses.toFixed(2),
+    internalTransfers: internalTransfers.toFixed(2),
+    netChange: (totalIncome - totalExpenses).toFixed(2)
+  });
 
   // Update confidence based on results
   if (uniqueTransactions.length > 10) {

@@ -36,6 +36,7 @@ export default function BillsPage() {
   const [dueDay, setDueDay] = useState('1');
   const [frequency, setFrequency] = useState<string>('monthly');
   const [isAutopay, setIsAutopay] = useState(false);
+  const [reminderEnabled, setReminderEnabled] = useState(true);
   const [reminderDays, setReminderDays] = useState('3');
 
   useEffect(() => {
@@ -70,7 +71,7 @@ export default function BillsPage() {
           due_day: parseInt(dueDay),
           frequency,
           is_autopay: isAutopay,
-          reminder_days: parseInt(reminderDays),
+          reminder_days: reminderEnabled ? parseInt(reminderDays) : 0,
         })
         .eq('id', editingBill.id);
     } else {
@@ -82,7 +83,7 @@ export default function BillsPage() {
         due_day: parseInt(dueDay),
         frequency,
         is_autopay: isAutopay,
-        reminder_days: parseInt(reminderDays),
+        reminder_days: reminderEnabled ? parseInt(reminderDays) : 0,
       });
     }
 
@@ -106,7 +107,8 @@ export default function BillsPage() {
     setDueDay(bill.due_day.toString());
     setFrequency(bill.frequency);
     setIsAutopay(bill.is_autopay);
-    setReminderDays(bill.reminder_days.toString());
+    setReminderEnabled(bill.reminder_days > 0);
+    setReminderDays(bill.reminder_days > 0 ? bill.reminder_days.toString() : '3');
     setDialogOpen(true);
   }
 
@@ -117,6 +119,7 @@ export default function BillsPage() {
     setDueDay('1');
     setFrequency('monthly');
     setIsAutopay(false);
+    setReminderEnabled(true);
     setReminderDays('3');
   }
 
@@ -246,17 +249,29 @@ export default function BillsPage() {
                 />
                 <Label htmlFor="autopay">Autopay enabled</Label>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="reminderDays">Remind me (days before)</Label>
-                <Input
-                  id="reminderDays"
-                  type="number"
-                  min="0"
-                  max="30"
-                  placeholder="3"
-                  value={reminderDays}
-                  onChange={(e) => setReminderDays(e.target.value)}
-                />
+              <div className="space-y-3">
+                <div className="flex items-center space-x-2">
+                  <Switch
+                    id="reminderEnabled"
+                    checked={reminderEnabled}
+                    onCheckedChange={setReminderEnabled}
+                  />
+                  <Label htmlFor="reminderEnabled">Enable reminder</Label>
+                </div>
+                {reminderEnabled && (
+                  <div className="space-y-2 pl-6">
+                    <Label htmlFor="reminderDays">Days before due date</Label>
+                    <Input
+                      id="reminderDays"
+                      type="number"
+                      min="1"
+                      max="30"
+                      placeholder="3"
+                      value={reminderDays}
+                      onChange={(e) => setReminderDays(e.target.value)}
+                    />
+                  </div>
+                )}
               </div>
               <Button type="submit" className="w-full">
                 {editingBill ? 'Update' : 'Add'} Bill

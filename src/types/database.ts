@@ -510,6 +510,35 @@ export interface Database {
           parsed_data?: Json | null;
         };
       };
+      monthly_budgets: {
+        Row: {
+          id: string;
+          user_id: string;
+          month_date: string;
+          wants: Json;
+          savings: Json;
+          total_income: number | null;
+          copied_from_month: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          month_date: string;
+          wants?: Json;
+          savings?: Json;
+          total_income?: number | null;
+          copied_from_month?: string | null;
+        };
+        Update: {
+          wants?: Json;
+          savings?: Json;
+          total_income?: number | null;
+          copied_from_month?: string | null;
+          updated_at?: string;
+        };
+      };
     };
   };
 }
@@ -521,3 +550,15 @@ export type InsertTables<T extends keyof Database['public']['Tables']> =
   Database['public']['Tables'][T]['Insert'];
 export type UpdateTables<T extends keyof Database['public']['Tables']> =
   Database['public']['Tables'][T]['Update'];
+
+// Monthly budget item types
+export interface MonthlyBudgetWant {
+  name: string;
+  amount: number;
+}
+
+export interface MonthlyBudgetSaving {
+  name: string;
+  amount: number;
+  savings_goal_id?: string;
+}

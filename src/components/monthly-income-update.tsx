@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { createClient } from '@/lib/supabase/client';
-import { Home, Target, PiggyBank, CreditCard } from 'lucide-react';
+import { Home, Target, PiggyBank, CreditCard, Copy, Sparkles } from 'lucide-react';
+import type { MonthlyBudgetWant, MonthlyBudgetSaving } from '@/types/database';
 
 interface MonthlyIncomeUpdateProps {
   isOpen: boolean;
@@ -23,7 +24,15 @@ interface BudgetCategory {
   type: 'need' | 'want' | 'saving';
   categoryType: 'fixed' | 'variable';
   isSavingsGoal?: boolean;
-  existingId?: string; // Track existing expense/savings goal ID
+  existingId?: string; // Track existing savings_goal ID for linking
+}
+
+interface MonthlyBudgetRecord {
+  id: string;
+  wants: MonthlyBudgetWant[];
+  savings: MonthlyBudgetSaving[];
+  total_income: number | null;
+  copied_from_month: string | null;
 }
 
 
@@ -50,6 +59,12 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
   const [subscriptionsTotal, setSubscriptionsTotal] = useState(0); // Total for all subscriptions (not editable)
   const [billsTotal, setBillsTotal] = useState(0); // Total for all bills (not editable)
 
+  // Monthly budget state
+  const [monthlyBudgetRecord, setMonthlyBudgetRecord] = useState<MonthlyBudgetRecord | null>(null);
+  const [hasBudgetForMonth, setHasBudgetForMonth] = useState(false);
+  const [previousMonthBudget, setPreviousMonthBudget] = useState<MonthlyBudgetRecord | null>(null);
+  const [isLoadingBudget, setIsLoadingBudget] = useState(false);
+
   // Month and year selection - default to current month
   const currentDate = new Date();
   const [selectedMonth, setSelectedMonth] = useState(currentDate.getMonth() + 1);
@@ -66,21 +81,40 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
     currentDate.getFullYear() - 2,
   ];
 
+  // Helper to get month date string (YYYY-MM-01)
+  const getMonthDateString = useCallback((month: number, year: number) => {
+    return `${year}-${month.toString().padStart(2, '0')}-01`;
+  }, []);
+
+  // Get previous month info
+  const getPreviousMonth = useCallback((month: number, year: number) => {
+    if (month === 1) {
+      return { month: 12, year: year - 1 };
+    }
+    return { month: month - 1, year };
+  }, []);
+
   // Load current income when dialog opens
   useEffect(() => {
     if (isOpen) {
       loadCurrentIncome();
-      loadBudgetAllocations();
       setDeletedCategories([]); // Reset deleted items when dialog opens
     }
   }, [isOpen]);
 
-  // Reload budget when tab changes to budget or income changes
+  // Load monthly budget when month/year changes or dialog opens
+  useEffect(() => {
+    if (isOpen) {
+      loadMonthlyBudget();
+    }
+  }, [isOpen, selectedMonth, selectedYear]);
+
+  // Reload subscriptions/bills when tab changes to budget
   useEffect(() => {
     if (activeTab === 'budget' && isOpen) {
-      loadBudgetAllocations();
+      loadSubscriptionsAndBills();
     }
-  }, [activeTab, newSalary, newApl, newPrimeActivite]);
+  }, [activeTab, isOpen]);
 
   const loadCurrentIncome = async () => {
     try {
@@ -148,7 +182,9 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
     return amount * (multipliers[frequency] || 1);
   };
 
-  const loadBudgetAllocations = async () => {
+  // Load monthly budget for the selected month
+  const loadMonthlyBudget = async () => {
+    setIsLoadingBudget(true);
     try {
       const supabase = createClient();
       const {
@@ -157,9 +193,102 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
 
       if (!user) return;
 
-      const totalIncome = (newSalary || currentIncome.salary || 0) + newApl + newPrimeActivite;
+      const monthDate = getMonthDateString(selectedMonth, selectedYear);
 
-      if (totalIncome === 0) return;
+      // Load budget for selected month
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: monthlyBudget } = await (supabase
+        .from('monthly_budgets')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('month_date', monthDate)
+        .single() as any);
+
+      if (monthlyBudget) {
+        setHasBudgetForMonth(true);
+        setMonthlyBudgetRecord({
+          id: monthlyBudget.id,
+          wants: (monthlyBudget.wants || []) as MonthlyBudgetWant[],
+          savings: (monthlyBudget.savings || []) as MonthlyBudgetSaving[],
+          total_income: monthlyBudget.total_income,
+          copied_from_month: monthlyBudget.copied_from_month,
+        });
+
+        // Convert to budget categories for UI
+        const totalIncome = (newSalary || currentIncome.salary || 0) + newApl + newPrimeActivite;
+        const categories: BudgetCategory[] = [];
+
+        // Add wants
+        ((monthlyBudget.wants || []) as MonthlyBudgetWant[]).forEach((want: MonthlyBudgetWant) => {
+          categories.push({
+            name: want.name,
+            amount: want.amount,
+            percentage: totalIncome > 0 ? (want.amount / totalIncome) * 100 : 0,
+            type: 'want',
+            categoryType: 'variable',
+            isSavingsGoal: false,
+          });
+        });
+
+        // Add savings
+        ((monthlyBudget.savings || []) as MonthlyBudgetSaving[]).forEach((saving: MonthlyBudgetSaving) => {
+          categories.push({
+            name: saving.name,
+            amount: saving.amount,
+            percentage: totalIncome > 0 ? (saving.amount / totalIncome) * 100 : 0,
+            type: 'saving',
+            categoryType: 'variable',
+            isSavingsGoal: true,
+            existingId: saving.savings_goal_id,
+          });
+        });
+
+        setBudgetCategories(categories);
+      } else {
+        setHasBudgetForMonth(false);
+        setMonthlyBudgetRecord(null);
+        setBudgetCategories([]);
+      }
+
+      // Load previous month's budget to offer copy option
+      const prev = getPreviousMonth(selectedMonth, selectedYear);
+      const prevMonthDate = getMonthDateString(prev.month, prev.year);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: prevBudget } = await (supabase
+        .from('monthly_budgets')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('month_date', prevMonthDate)
+        .single() as any);
+
+      if (prevBudget) {
+        setPreviousMonthBudget({
+          id: prevBudget.id,
+          wants: (prevBudget.wants || []) as MonthlyBudgetWant[],
+          savings: (prevBudget.savings || []) as MonthlyBudgetSaving[],
+          total_income: prevBudget.total_income,
+          copied_from_month: prevBudget.copied_from_month,
+        });
+      } else {
+        setPreviousMonthBudget(null);
+      }
+    } catch (error) {
+      console.error('Error loading monthly budget:', error);
+    } finally {
+      setIsLoadingBudget(false);
+    }
+  };
+
+  // Load subscriptions and bills totals (read-only, managed elsewhere)
+  const loadSubscriptionsAndBills = async () => {
+    try {
+      const supabase = createClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) return;
 
       // Load existing expenses (subscriptions)
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -177,35 +306,13 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
         .eq('user_id', user.id)
         .eq('is_active', true) as any);
 
-      // Load existing savings goals
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: existingSavings } = await (supabase
-        .from('savings_goals')
-        .select('*')
-        .eq('user_id', user.id)
-        .eq('is_active', true) as any);
-
-      const initialCategories: BudgetCategory[] = [];
       let subsTotal = 0;
 
-      // Separate subscriptions from discretionary expenses
+      // Calculate subscriptions total
       if (existingExpenses && existingExpenses.length > 0) {
         existingExpenses.forEach((expense: any) => {
           if (isSubscription(expense)) {
-            // Subscriptions: add to total (managed in Expenses page)
             subsTotal += getSubscriptionMonthlyAmount(expense);
-          } else {
-            // Discretionary expenses (groceries, entertainment, etc.): add as editable Wants
-            const monthlyAmount = getSubscriptionMonthlyAmount(expense);
-            initialCategories.push({
-              name: expense.name,
-              amount: monthlyAmount,
-              percentage: totalIncome > 0 ? (monthlyAmount / totalIncome) * 100 : 0,
-              type: 'want',
-              categoryType: 'variable',
-              isSavingsGoal: false,
-              existingId: expense.id,
-            });
           }
         });
       }
@@ -216,7 +323,6 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
       let billsSum = 0;
       if (existingBills && existingBills.length > 0) {
         existingBills.forEach((bill: any) => {
-          // Calculate monthly equivalent for bills
           const multipliers: Record<string, number> = {
             weekly: 4.33,
             biweekly: 2.17,
@@ -228,26 +334,45 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
         });
       }
       setBillsTotal(billsSum);
-
-      // Add existing savings goals
-      if (existingSavings && existingSavings.length > 0) {
-        existingSavings.forEach((saving: any) => {
-          initialCategories.push({
-            name: saving.name,
-            amount: saving.monthly_contribution || 0,
-            percentage: totalIncome > 0 ? ((saving.monthly_contribution || 0) / totalIncome) * 100 : 0,
-            type: 'saving',
-            categoryType: 'variable',
-            isSavingsGoal: true,
-            existingId: saving.id,
-          });
-        });
-      }
-
-      setBudgetCategories(initialCategories);
     } catch (error) {
-      console.error('Error loading budget allocations:', error);
+      console.error('Error loading subscriptions and bills:', error);
     }
+  };
+
+  // Copy budget from previous month
+  const copyFromPreviousMonth = () => {
+    if (!previousMonthBudget) return;
+
+    const totalIncome = (newSalary || currentIncome.salary || 0) + newApl + newPrimeActivite;
+    const categories: BudgetCategory[] = [];
+
+    // Copy wants
+    previousMonthBudget.wants.forEach((want) => {
+      categories.push({
+        name: want.name,
+        amount: want.amount,
+        percentage: totalIncome > 0 ? (want.amount / totalIncome) * 100 : 0,
+        type: 'want',
+        categoryType: 'variable',
+        isSavingsGoal: false,
+      });
+    });
+
+    // Copy savings
+    previousMonthBudget.savings.forEach((saving) => {
+      categories.push({
+        name: saving.name,
+        amount: saving.amount,
+        percentage: totalIncome > 0 ? (saving.amount / totalIncome) * 100 : 0,
+        type: 'saving',
+        categoryType: 'variable',
+        isSavingsGoal: true,
+        existingId: saving.savings_goal_id,
+      });
+    });
+
+    setBudgetCategories(categories);
+    setHasBudgetForMonth(true); // Mark as having budget (will be created on save)
   };
 
   const updateBudgetCategory = (index: number, updates: Partial<BudgetCategory>) => {
@@ -300,16 +425,6 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
     const totalIncome = (newSalary || currentIncome.salary || 0) + newApl + newPrimeActivite;
     if (totalIncome === 0) return;
 
-    // Mark all existing categories for deletion (but not subscriptions - they're managed elsewhere)
-    budgetCategories.forEach((cat) => {
-      if (cat.existingId) {
-        setDeletedCategories((prev) => [
-          ...prev,
-          { id: cat.existingId!, isSavingsGoal: cat.isSavingsGoal || false }
-        ]);
-      }
-    });
-
     // Calculate available budget after subscriptions and bills
     const subscriptionsPercentage = totalIncome > 0 ? (subscriptionsTotal / totalIncome) * 100 : 0;
     const billsPercentage = totalIncome > 0 ? (billsTotal / totalIncome) * 100 : 0;
@@ -336,6 +451,7 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
     ];
 
     setBudgetCategories(autoBudget);
+    setHasBudgetForMonth(true); // Mark as having budget (will be created on save)
   };
 
   const calculateBudgetTotals = () => {
@@ -441,6 +557,9 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
       } = await supabase.auth.getUser();
 
       if (authError || !user) throw new Error('Not authenticated');
+
+      const totalIncome = (newSalary || currentIncome.salary || 0) + newApl + newPrimeActivite;
+      const monthDate = getMonthDateString(selectedMonth, selectedYear);
 
       // Update salary if changed
       if (newSalary !== null && newSalary !== currentIncome.salary) {
@@ -554,72 +673,79 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
         }
       }
 
-      // Update budget allocations for each category
-      console.log('Budget categories to save:', budgetCategories);
+      // Prepare budget data for monthly_budgets table
+      const wantsData: MonthlyBudgetWant[] = budgetCategories
+        .filter((cat) => cat.type === 'want' && cat.name.trim())
+        .map((cat) => ({ name: cat.name, amount: cat.amount }));
+
+      const savingsData: MonthlyBudgetSaving[] = budgetCategories
+        .filter((cat) => cat.type === 'saving' && cat.name.trim())
+        .map((cat) => ({
+          name: cat.name,
+          amount: cat.amount,
+          savings_goal_id: cat.existingId,
+        }));
+
+      // Determine if we're copying from previous month
+      const prev = getPreviousMonth(selectedMonth, selectedYear);
+      const prevMonthDate = getMonthDateString(prev.month, prev.year);
+      const copiedFromMonth = previousMonthBudget ? prevMonthDate : null;
+
+      // Save to monthly_budgets table (upsert)
+      if (budgetCategories.length > 0 || hasBudgetForMonth) {
+        if (monthlyBudgetRecord?.id) {
+          // Update existing record
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { error } = await (supabase
+            .from('monthly_budgets') as any)
+            .update({
+              wants: wantsData,
+              savings: savingsData,
+              total_income: totalIncome,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', monthlyBudgetRecord.id);
+          if (error) throw new Error(`Failed to update monthly budget: ${error.message}`);
+        } else {
+          // Create new record
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { error } = await (supabase.from('monthly_budgets') as any).insert({
+            user_id: user.id,
+            month_date: monthDate,
+            wants: wantsData,
+            savings: savingsData,
+            total_income: totalIncome,
+            copied_from_month: copiedFromMonth,
+          });
+          if (error) throw new Error(`Failed to create monthly budget: ${error.message}`);
+        }
+      }
+
+      // Also update savings_goals.monthly_contribution with the latest values
+      // This keeps the savings goals table in sync for goal tracking purposes
       for (const cat of budgetCategories) {
-        console.log('Processing category:', cat.name, 'isSavingsGoal:', cat.isSavingsGoal, 'existingId:', cat.existingId, 'amount:', cat.amount);
-        if (cat.isSavingsGoal && cat.existingId) {
-          // Update existing savings goal
+        if (cat.isSavingsGoal && cat.existingId && cat.name.trim()) {
+          // Update existing savings goal's monthly contribution
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const { error } = await (supabase
             .from('savings_goals') as any)
-            .update({ monthly_contribution: cat.amount, name: cat.name })
+            .update({ monthly_contribution: cat.amount })
             .eq('id', cat.existingId);
-          if (error) throw new Error(`Failed to update savings goal "${cat.name}": ${error.message}`);
+          if (error) console.warn(`Failed to sync savings goal "${cat.name}": ${error.message}`);
         } else if (cat.isSavingsGoal && !cat.existingId && cat.name.trim()) {
-          // Create new savings goal from budget allocation
-          console.log('Creating new savings goal:', cat.name, 'amount:', cat.amount);
+          // Create new savings goal for tracking
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const { data, error } = await (supabase.from('savings_goals') as any).insert({
+          const { error } = await (supabase.from('savings_goals') as any).insert({
             user_id: user.id,
             name: cat.name,
             type: 'other',
-            target_amount: cat.amount * 12, // Default target: 1 year of contributions
+            target_amount: cat.amount * 12,
             current_amount: 0,
             monthly_contribution: cat.amount,
             priority: 10,
             is_active: true,
-          }).select();
-          console.log('Savings goal insert result:', data, 'error:', error);
-          if (error) throw new Error(`Failed to create savings goal "${cat.name}": ${error.message}`);
-        } else if (!cat.isSavingsGoal && cat.existingId) {
-          // Update expense amount
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const { error } = await (supabase
-            .from('expenses') as any)
-            .update({ amount: cat.amount, name: cat.name })
-            .eq('id', cat.existingId);
-          if (error) throw new Error(`Failed to update expense "${cat.name}": ${error.message}`);
-        } else if (!cat.isSavingsGoal && !cat.existingId && cat.name.trim()) {
-          // Create new expense from budget allocation
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const { error } = await (supabase.from('expenses') as any).insert({
-            user_id: user.id,
-            name: cat.name,
-            amount: cat.amount,
-            type: cat.categoryType,
-            is_recurring: true,
-            frequency: 'monthly',
-            is_active: true,
           });
-          if (error) throw new Error(`Failed to create expense "${cat.name}": ${error.message}`);
-        }
-      }
-
-      // Delete removed categories (soft delete by setting is_active to false)
-      for (const deleted of deletedCategories) {
-        if (deleted.isSavingsGoal) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const { error } = await (supabase.from('savings_goals') as any)
-            .update({ is_active: false })
-            .eq('id', deleted.id);
-          if (error) throw new Error(`Failed to delete savings goal: ${error.message}`);
-        } else {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const { error } = await (supabase.from('expenses') as any)
-            .update({ is_active: false })
-            .eq('id', deleted.id);
-          if (error) throw new Error(`Failed to delete expense: ${error.message}`);
+          if (error) console.warn(`Failed to create savings goal "${cat.name}": ${error.message}`);
         }
       }
 
@@ -705,78 +831,122 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
         <div className="flex-1 overflow-y-auto p-6">
           {activeTab === 'budget' ? (
             <div className="space-y-6">
+              {/* Month Header */}
               <div className="bg-slate-100 dark:bg-slate-800 rounded-lg p-4">
-                <p className="text-sm text-slate-600 dark:text-slate-400">New Total Monthly Income</p>
+                <p className="text-sm text-slate-600 dark:text-slate-400">
+                  Budget for {MONTHS[selectedMonth - 1]} {selectedYear}
+                </p>
                 <p className="text-3xl font-bold text-slate-900 dark:text-slate-100">
                   €{((newSalary || currentIncome.salary || 0) + newApl + newPrimeActivite).toFixed(2)}
                 </p>
               </div>
 
-              {/* Remaining to Allocate */}
-              {(() => {
-                const totalIncome = (newSalary || currentIncome.salary || 0) + newApl + newPrimeActivite;
-                const totalAllocated = budgetCategories.reduce((sum, cat) => sum + cat.amount, 0) + subscriptionsTotal + billsTotal;
-                const remaining = totalIncome - totalAllocated;
-                const remainingPercentage = totalIncome > 0 ? (remaining / totalIncome) * 100 : 0;
-
-                return (
-                  <div className={`rounded-lg p-4 border-2 ${
-                    remaining < 0
-                      ? 'bg-red-50 dark:bg-red-950 border-red-300 dark:border-red-800'
-                      : remaining > totalIncome * 0.2
-                        ? 'bg-orange-50 dark:bg-orange-950 border-orange-300 dark:border-orange-800'
-                        : 'bg-green-50 dark:bg-green-950 border-green-300 dark:border-green-800'
-                  }`}>
-                    <p className="text-sm text-slate-600 dark:text-slate-400">Remaining to be allocated</p>
-                    <div className="flex items-end gap-3">
-                      <p className={`text-2xl font-bold ${
-                        remaining < 0
-                          ? 'text-red-700 dark:text-red-300'
-                          : remaining > totalIncome * 0.2
-                            ? 'text-orange-700 dark:text-orange-300'
-                            : 'text-green-700 dark:text-green-300'
-                      }`}>
-                        €{remaining.toFixed(2)}
-                      </p>
-                      <p className={`text-lg font-semibold mb-0.5 ${
-                        remaining < 0
-                          ? 'text-red-600 dark:text-red-400'
-                          : remaining > totalIncome * 0.2
-                            ? 'text-orange-600 dark:text-orange-400'
-                            : 'text-green-600 dark:text-green-400'
-                      }`}>
-                        {remainingPercentage.toFixed(1)}%
-                      </p>
-                    </div>
-                    {remaining < 0 && (
-                      <p className="text-sm text-red-700 dark:text-red-300 mt-2">
-                        You're over budget by €{Math.abs(remaining).toFixed(2)}. Please reduce some allocations.
-                      </p>
+              {/* Loading State */}
+              {isLoadingBudget ? (
+                <div className="flex items-center justify-center py-12">
+                  <div className="w-8 h-8 border-4 border-slate-300 dark:border-slate-700 border-t-black dark:border-t-white rounded-full animate-spin" />
+                </div>
+              ) : !hasBudgetForMonth && budgetCategories.length === 0 ? (
+                /* No Budget State */
+                <div className="bg-amber-50 dark:bg-amber-950/30 border-2 border-amber-200 dark:border-amber-800 rounded-xl p-6 text-center space-y-4">
+                  <div className="text-4xl">📋</div>
+                  <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
+                    No budget set for {MONTHS[selectedMonth - 1]} {selectedYear}
+                  </h3>
+                  <p className="text-sm text-slate-600 dark:text-slate-400">
+                    Set up your budget allocations for this month to track your spending.
+                  </p>
+                  <div className="flex flex-col sm:flex-row gap-3 justify-center pt-2">
+                    {previousMonthBudget && (
+                      <button
+                        onClick={copyFromPreviousMonth}
+                        className="px-4 py-2 bg-white dark:bg-slate-800 border-2 border-slate-300 dark:border-slate-600 hover:border-slate-400 dark:hover:border-slate-500 text-slate-900 dark:text-slate-100 font-medium rounded-lg transition-colors flex items-center justify-center gap-2"
+                      >
+                        <Copy className="h-4 w-4" />
+                        Copy from {MONTHS[getPreviousMonth(selectedMonth, selectedYear).month - 1]}
+                      </button>
                     )}
-                    {remaining > totalIncome * 0.2 && remaining >= 0 && (
-                      <p className="text-sm text-orange-700 dark:text-orange-300 mt-2">
-                        You have a large amount unallocated. Consider adding to expenses or savings.
-                      </p>
-                    )}
+                    <button
+                      onClick={applyAutoBudget}
+                      className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-2"
+                    >
+                      <Sparkles className="h-4 w-4" />
+                      Start Fresh with Auto Budget
+                    </button>
                   </div>
-                );
-              })()}
+                </div>
+              ) : (
+                /* Budget Editor */
+                <>
+                  {/* Remaining to Allocate */}
+                  {(() => {
+                    const totalIncome = (newSalary || currentIncome.salary || 0) + newApl + newPrimeActivite;
+                    const totalAllocated = budgetCategories.reduce((sum, cat) => sum + cat.amount, 0) + subscriptionsTotal + billsTotal;
+                    const remaining = totalIncome - totalAllocated;
+                    const remainingPercentage = totalIncome > 0 ? (remaining / totalIncome) * 100 : 0;
 
-              {/* Auto Budget Button */}
-              <div className="flex justify-center">
-                <button
-                  onClick={applyAutoBudget}
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors flex items-center gap-2"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                    <path fillRule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clipRule="evenodd" />
-                  </svg>
-                  Auto Budget (50/30/20)
-                </button>
-              </div>
+                    return (
+                      <div className={`rounded-lg p-4 border-2 ${
+                        remaining < 0
+                          ? 'bg-red-50 dark:bg-red-950 border-red-300 dark:border-red-800'
+                          : remaining > totalIncome * 0.2
+                            ? 'bg-orange-50 dark:bg-orange-950 border-orange-300 dark:border-orange-800'
+                            : 'bg-green-50 dark:bg-green-950 border-green-300 dark:border-green-800'
+                      }`}>
+                        <p className="text-sm text-slate-600 dark:text-slate-400">Remaining to be allocated</p>
+                        <div className="flex items-end gap-3">
+                          <p className={`text-2xl font-bold ${
+                            remaining < 0
+                              ? 'text-red-700 dark:text-red-300'
+                              : remaining > totalIncome * 0.2
+                                ? 'text-orange-700 dark:text-orange-300'
+                                : 'text-green-700 dark:text-green-300'
+                          }`}>
+                            €{remaining.toFixed(2)}
+                          </p>
+                          <p className={`text-lg font-semibold mb-0.5 ${
+                            remaining < 0
+                              ? 'text-red-600 dark:text-red-400'
+                              : remaining > totalIncome * 0.2
+                                ? 'text-orange-600 dark:text-orange-400'
+                                : 'text-green-600 dark:text-green-400'
+                          }`}>
+                            {remainingPercentage.toFixed(1)}%
+                          </p>
+                        </div>
+                        {remaining < 0 && (
+                          <p className="text-sm text-red-700 dark:text-red-300 mt-2">
+                            You're over budget by €{Math.abs(remaining).toFixed(2)}. Please reduce some allocations.
+                          </p>
+                        )}
+                        {remaining > totalIncome * 0.2 && remaining >= 0 && (
+                          <p className="text-sm text-orange-700 dark:text-orange-300 mt-2">
+                            You have a large amount unallocated. Consider adding to expenses or savings.
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })()}
 
-              {/* Budget Sections */}
-              <>
+                  {/* Budget Action Buttons */}
+                  <div className="flex justify-center gap-3">
+                    {previousMonthBudget && (
+                      <button
+                        onClick={copyFromPreviousMonth}
+                        className="px-4 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-300 font-medium rounded-lg transition-colors flex items-center gap-2 text-sm"
+                      >
+                        <Copy className="h-4 w-4" />
+                        Copy from {MONTHS[getPreviousMonth(selectedMonth, selectedYear).month - 1]}
+                      </button>
+                    )}
+                    <button
+                      onClick={applyAutoBudget}
+                      className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors flex items-center gap-2 text-sm"
+                    >
+                      <Sparkles className="h-4 w-4" />
+                      Auto Budget
+                    </button>
+                  </div>
                 {/* Subscriptions Total (read-only) */}
                 {subscriptionsTotal > 0 && (
                   <div className="space-y-3">
@@ -1013,6 +1183,7 @@ export function MonthlyIncomeUpdate({ isOpen, onClose, onUpdate }: MonthlyIncome
                   )}
                 </div>
               </>
+              )}
             </div>
           ) : activeTab === 'paycheck' ? (
             <div className="space-y-6">

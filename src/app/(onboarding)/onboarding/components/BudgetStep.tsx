@@ -426,6 +426,55 @@ export function BudgetStep({ totalIncome, onComplete, onBack }: BudgetStepProps)
         )}
       </div>
 
+      {/* Remaining to Allocate */}
+      {(() => {
+        const totalAllocated = categories.reduce((sum, cat) => sum + cat.amount, 0);
+        const remaining = totalIncome - totalAllocated;
+        const remainingPercentage = totalIncome > 0 ? (remaining / totalIncome) * 100 : 0;
+
+        return (
+          <div className={`rounded-lg p-4 border-2 ${
+            remaining < 0
+              ? 'bg-red-50 dark:bg-red-950 border-red-300 dark:border-red-800'
+              : remaining > totalIncome * 0.2
+                ? 'bg-orange-50 dark:bg-orange-950 border-orange-300 dark:border-orange-800'
+                : 'bg-green-50 dark:bg-green-950 border-green-300 dark:border-green-800'
+          }`}>
+            <p className="text-sm text-slate-600 dark:text-slate-400">Remaining to be allocated</p>
+            <div className="flex items-end gap-3">
+              <p className={`text-2xl font-bold ${
+                remaining < 0
+                  ? 'text-red-700 dark:text-red-300'
+                  : remaining > totalIncome * 0.2
+                    ? 'text-orange-700 dark:text-orange-300'
+                    : 'text-green-700 dark:text-green-300'
+              }`}>
+                €{remaining.toFixed(2)}
+              </p>
+              <p className={`text-lg font-semibold mb-0.5 ${
+                remaining < 0
+                  ? 'text-red-600 dark:text-red-400'
+                  : remaining > totalIncome * 0.2
+                    ? 'text-orange-600 dark:text-orange-400'
+                    : 'text-green-600 dark:text-green-400'
+              }`}>
+                {remainingPercentage.toFixed(1)}%
+              </p>
+            </div>
+            {remaining < 0 && (
+              <p className="text-sm text-red-700 dark:text-red-300 mt-2">
+                You're over budget by €{Math.abs(remaining).toFixed(2)}. Please reduce some allocations.
+              </p>
+            )}
+            {remaining > totalIncome * 0.2 && remaining >= 0 && (
+              <p className="text-sm text-orange-700 dark:text-orange-300 mt-2">
+                You have a large amount unallocated. Consider adding to expenses or savings.
+              </p>
+            )}
+          </div>
+        );
+      })()}
+
       {/* Summary */}
       <div className="bg-slate-100 dark:bg-slate-800 rounded-lg p-6 space-y-3">
         <div className="flex justify-between text-sm">
